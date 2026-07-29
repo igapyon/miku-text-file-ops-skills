@@ -1,0 +1,51 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import test from "node:test";
+
+const root = process.cwd();
+const skillRoot = path.resolve(root, "skills/miku-text-file-ops");
+
+test("skill contract is narrow and directly routes bundled references", () => {
+  const skill = fs.readFileSync(path.resolve(skillRoot, "SKILL.md"), "utf8");
+  assert.match(skill, /^---\nname: miku-text-file-ops\n/m);
+  assert.match(skill, /Do not activate for ordinary UTF-8/);
+  assert.match(skill, /references\/runtime\.md/);
+  assert.match(skill, /references\/workflow\.md/);
+  assert.match(skill, /references\/response-handling\.md/);
+  assert.match(skill, /index\.json/);
+  assert.ok(skill.split(/\n/).length <= 200);
+});
+
+test("generated discovery index matches indexed files and sizes", () => {
+  const indexPath = path.resolve(skillRoot, "index.json");
+  assert.equal(fs.existsSync(indexPath), true);
+  const index = JSON.parse(fs.readFileSync(indexPath, "utf8"));
+  const indexed = new Map(index.files.map((entry) => [entry.path, entry.size]));
+  const expected = collectIndexedFiles(skillRoot);
+  assert.deepEqual([...indexed.keys()], [...expected.keys()]);
+  assert.deepEqual([...indexed.values()], [...expected.values()]);
+});
+
+function collectIndexedFiles(directory, relativeRoot = "") {
+  const result = new Map();
+  const entries = fs.readdirSync(directory, { withFileTypes: true })
+    .filter((entry) => !entry.name.startsWith("."))
+    .sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+
+  for (const entry of entries) {
+    const relative = relativeRoot ? `${relativeRoot}/${entry.name}` : entry.name;
+    const absolute = path.resolve(directory, entry.name);
+    if (entry.isDirectory()) {
+      for (const [nestedPath, size] of collectIndexedFiles(absolute, relative)) {
+        result.set(nestedPath, size);
+      }
+      continue;
+    }
+    if (relative === "index.json" || !/\.(?:md|json|mjs|yaml|txt)$/.test(entry.name)) {
+      continue;
+    }
+    result.set(relative, fs.statSync(absolute).size);
+  }
+  return result;
+}

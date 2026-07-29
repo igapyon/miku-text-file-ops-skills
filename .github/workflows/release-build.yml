@@ -31,37 +31,12 @@ jobs:
           node-version: 24
 
       - name: Verify bundled CLI runtime
-        shell: bash
         run: |
-          set -euo pipefail
-          runtime_dir="skills/miku-text-file-ops/runtime"
-          if [[ ! -d "${runtime_dir}" ]]; then
-            echo "Runtime directory not found: ${runtime_dir}" >&2
-            exit 1
-          fi
-          runtime_path="$(
-            find "${runtime_dir}" -maxdepth 1 -type f \
-              -name 'miku-text-file-ops-[0-9]*.mjs' \
-              -print |
-              sort -V |
-              tail -n 1
-          )"
-          if [[ -z "${runtime_path}" || ! -s "${runtime_path}" ]]; then
-            echo "Standalone CLI runtime not found under ${runtime_dir}." >&2
-            exit 1
-          fi
-          node "${runtime_path}" --version
-          node "${runtime_path}" --help
+          node skills/miku-text-file-ops/lib/run-miku-text-file-ops.mjs --version
+          node skills/miku-text-file-ops/lib/run-miku-text-file-ops.mjs --help
 
       - name: Build release bundle
-        shell: bash
-        run: |
-          set -euo pipefail
-          if ! node -e "process.exit(require('./package.json').scripts?.build ? 0 : 1)"; then
-            echo "package.json must define scripts.build before publishing a Release." >&2
-            exit 1
-          fi
-          npm run build
+        run: npm run build
 
       - name: Verify release tag version
         id: release_version
