@@ -1,6 +1,6 @@
 {
   "name": "miku-text-file-ops-skills",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "private": true,
   "description": "Agent Skills for miku-text-file-ops",
   "license": "Apache-2.0",

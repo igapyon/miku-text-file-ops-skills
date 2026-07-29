@@ -47,3 +47,4 @@ jobs:
               }
               console.log('Repository scaffold is valid; full build starts when scripts.build is added.');
             "
+          fi
