@@ -8,25 +8,35 @@ upstream `miku-text-file-ops` GitHub Release.
 | Field | Value |
 | --- | --- |
 | Upstream repository | `https://github.com/igapyon/miku-text-file-ops` |
-| Release | `v0.4.0` |
-| Release URL | `https://github.com/igapyon/miku-text-file-ops/releases/tag/v0.4.0` |
-| Asset | `miku-text-file-ops-0.4.0.mjs` |
-| Received path | `skills/miku-text-file-ops/runtime/miku-text-file-ops-0.4.0.mjs` |
-| Received date | 2026-07-29 |
-| Size | 698665 bytes |
-| SHA-256 | `f505fc005e4016b96392b00701cadb19deab417d1c2593a37b926e707300b582` |
-| Reported version | `0.4.0` |
+| Release | `v0.4.1` |
+| Release URL | `https://github.com/igapyon/miku-text-file-ops/releases/tag/v0.4.1` |
+| Upstream commit | `4f4d715c549984ded23d0d3b105077e01fb384ac` |
+| Asset | `miku-text-file-ops-0.4.1.mjs` |
+| Received path | `skills/miku-text-file-ops/runtime/miku-text-file-ops-0.4.1.mjs` |
+| Received date | 2026-07-30 |
+| Size | 718307 bytes |
+| SHA-256 | `af5c3c80eb48e1e8890e439015fd177d242b50e5af87d24b73d0dda5f7c7ef73` |
+| Reported version | `0.4.1` |
 
 As the release-versioning rule, the Agent Skill package version must match the
 bundled upstream runtime version. Verify the runtime independently from its
 artifact provenance and `--version`; do not assume that matching package
 metadata proves the bundled artifact version.
 
+## First-Execution History
+
+| Skills release | Runtime status |
+| --- | --- |
+| `v0.3.2` | Planning and repository foundation only. The upstream `v0.3.2` worktree candidate was not accepted because no reviewed Release asset had passed the first-execution gate. |
+| `v0.3.5` | Accepted upstream `v0.3.1` standalone CLI and passed the first installed metadata and data-operation execution checks. |
+| `v0.4.0` | Adopted the policy that the Skills package and bundled CLI use the same version. |
+| `v0.4.1` | Accepted the repository-encoding fix and expanded isolated ZIP verification to the Windows-31J mutation workflow. |
+
 ## Artifact Roles
 
-Only `miku-text-file-ops-0.4.0.mjs` is executable in this Skill.
+Only `miku-text-file-ops-0.4.1.mjs` is executable in this Skill.
 
-`miku-text-file-ops-runtime-0.4.0.mjs` is an importable API bundle and is not
+`miku-text-file-ops-runtime-0.4.1.mjs` is an importable API bundle and is not
 received or executed. The source archive is not a runtime artifact.
 
 ## Verification

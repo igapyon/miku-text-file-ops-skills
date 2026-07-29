@@ -1,0 +1,131 @@
+{
+  "formatVersion": 1,
+  "routingPrompts": [
+    {
+      "id": "must-trigger-windows31j-update",
+      "category": "must-trigger",
+      "prompt": "Windows-31Jの設定ファイルを文字コードとCRLFを維持したまま更新して。",
+      "expectSkill": true,
+      "expectBundledCli": true,
+      "expectedOperations": ["read", "update"]
+    },
+    {
+      "id": "must-trigger-mixed-encoding-search",
+      "category": "must-trigger",
+      "prompt": "このフォルダはUTF-8とCP932が混在している。エラーコードを横断検索して。",
+      "expectSkill": true,
+      "expectBundledCli": true,
+      "expectedOperations": ["search"],
+      "expectedInitialProjection": "summary"
+    },
+    {
+      "id": "recovery-mojibake",
+      "category": "recovery-trigger",
+      "prompt": "通常のreadで文字化けしたので、安全に読み直して必要なら修正して。",
+      "expectSkill": true,
+      "expectBundledCli": true,
+      "expectedOperations": ["read", "update"]
+    },
+    {
+      "id": "explicit-product",
+      "category": "explicit",
+      "prompt": "miku-text-file-opsを使ってlegacyディレクトリの候補ファイルを調べて。",
+      "expectSkill": true,
+      "expectBundledCli": true,
+      "expectedOperations": ["search"],
+      "expectedInitialProjection": "files"
+    },
+    {
+      "id": "must-not-trigger-readme",
+      "category": "must-not-trigger",
+      "prompt": "UTF-8のREADME.mdでTODOを検索して修正して。",
+      "expectSkill": false,
+      "expectBundledCli": false,
+      "expectedNativeTools": ["rg", "apply_patch"]
+    },
+    {
+      "id": "must-not-trigger-source-search",
+      "category": "must-not-trigger",
+      "prompt": "src以下のTypeScriptで未使用importを探して。",
+      "expectSkill": false,
+      "expectBundledCli": false,
+      "expectedNativeTools": ["rg"]
+    },
+    {
+      "id": "must-not-trigger-binary",
+      "category": "must-not-trigger",
+      "prompt": "PNG画像のメタデータを調べて。",
+      "expectSkill": false,
+      "expectBundledCli": false
+    },
+    {
+      "id": "ambiguous-generic-todo",
+      "category": "ambiguous",
+      "prompt": "TODOを直して。",
+      "expectSkill": false,
+      "expectBundledCli": false,
+      "expectedNativeTools": ["rg"]
+    }
+  ],
+  "contextScenarios": [
+    {
+      "id": "broad-path-inventory",
+      "prompt": "Windows-31J対象を含む巨大なworkplaceのファイル数をまず把握して。",
+      "expectedInitialProjection": "count",
+      "mustRefineBeforeLimitRaise": true
+    },
+    {
+      "id": "broad-mixed-encoding-query",
+      "prompt": "混在文字コードの全体でERRORを調べ、まず走査状況を示して。",
+      "expectedInitialProjection": "summary",
+      "mustRefineBeforeLimitRaise": true
+    },
+    {
+      "id": "exact-count",
+      "prompt": "CP932ファイル内のERROR行数を正確に数えて。",
+      "expectedInitialProjection": "count",
+      "rejectFalseExactCount": true
+    },
+    {
+      "id": "candidate-selection",
+      "prompt": "文字化けする設定ファイルの候補パスだけ出して。",
+      "expectedInitialProjection": "files"
+    },
+    {
+      "id": "selective-match-read",
+      "prompt": "CP932ログでE1234の箇所と周辺だけ読んで。",
+      "expectedInitialProjection": "matches",
+      "expectedReadWindow": {"before": 40, "after": 40}
+    },
+    {
+      "id": "overlapping-ranges",
+      "prompt": "同じSJISファイルの近接した2件の一致周辺を読んで。",
+      "mergeOverlappingRanges": true,
+      "splitAtEffectiveLineLimit": true
+    },
+    {
+      "id": "small-full-read",
+      "prompt": "8KiBのWindows-31J設定ファイル全体を確認して。",
+      "expectedReadSelector": "full",
+      "knownRawBytes": 8192
+    },
+    {
+      "id": "large-section-read",
+      "prompt": "64KiBのCP932文書で一致した節だけ確認して。",
+      "expectedReadSelector": "range",
+      "knownRawBytes": 65536
+    },
+    {
+      "id": "partial-search",
+      "prompt": "部分結果になった混在文字コード検索を安全に絞り込んで。",
+      "mustRefineBeforeLimitRaise": true,
+      "rejectFalseCompleteness": true
+    },
+    {
+      "id": "partial-multi-item-read",
+      "prompt": "複数のSJIS候補を読み、未処理項目があれば必要分だけ続けて。",
+      "resubmitFromNextItemIndex": true,
+      "rejectWholeRequestReplay": true
+    }
+  ]
+}
