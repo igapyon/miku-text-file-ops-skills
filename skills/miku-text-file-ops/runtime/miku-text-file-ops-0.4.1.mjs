@@ -3750,6 +3750,33 @@ function validateLimits(value) {
   }
   return effectiveAgentV1Limits(overrides);
 }
+function applyLimitCeilings(requested, ceilings) {
+  if (ceilings === void 0) {
+    return { effectiveLimits: { ...requested }, diagnostics: [] };
+  }
+  const effectiveLimits = { ...requested };
+  const diagnostics = [];
+  for (const [name, ceiling] of Object.entries(ceilings)) {
+    if (ceiling === void 0 || !Number.isSafeInteger(ceiling) || ceiling <= 0) {
+      continue;
+    }
+    const limitName = name;
+    if (effectiveLimits[limitName] > ceiling) {
+      diagnostics.push({
+        severity: "warning",
+        code: "limit_clamped",
+        message: `limits.${name} was clamped to the host ceiling`,
+        details: {
+          field: `limits.${name}`,
+          requested: effectiveLimits[limitName],
+          effective: ceiling
+        }
+      });
+      effectiveLimits[limitName] = ceiling;
+    }
+  }
+  return { effectiveLimits, diagnostics };
+}
 function validationDiagnostic(code, message, details) {
   return {
     severity: "error",
@@ -3772,741 +3799,36 @@ function compareUnicodeScalars(left, right) {
   return leftScalars.length - rightScalars.length;
 }
 
-// dist/src/core/mutate.js
-import { randomUUID } from "node:crypto";
-import { chmod, lstat, open, readFile, rename, unlink } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
-
-// dist/src/contracts/requests.js
-var SEARCH_COMMON_FIELDS = /* @__PURE__ */ new Set([
-  "mode",
-  "projection",
-  "include",
-  "exclude",
-  "facets",
-  "limits"
-]);
-var CONTENT_SEARCH_FIELDS = /* @__PURE__ */ new Set([
-  ...SEARCH_COMMON_FIELDS,
-  "pattern",
-  "syntax",
-  "caseSensitive",
-  "beforeContext",
-  "afterContext"
-]);
-var PATH_PROJECTIONS = /* @__PURE__ */ new Set([
-  "files",
-  "summary",
-  "count"
-]);
-var CONTENT_PROJECTIONS = /* @__PURE__ */ new Set([
-  "matches",
-  "files",
-  "summary",
-  "count"
-]);
-var FACETS = /* @__PURE__ */ new Set(["extension", "topLevelPath"]);
-var ENCODINGS = /* @__PURE__ */ new Set([
-  "utf-8",
-  "utf-16le",
-  "utf-16be",
-  "windows-31j"
-]);
-var SEARCH_LIMITS_EVERYWHERE = /* @__PURE__ */ new Set([
-  "maxResultBytes",
-  "maxDiagnostics",
-  "maxFilesVisited"
-]);
-var READ_LIMITS = /* @__PURE__ */ new Set([
-  "maxResultBytes",
-  "maxTextCharsReturned",
-  "maxDiagnostics",
-  "maxItems",
-  "maxLinesPerItem"
-]);
-function validateSearchRequest(value) {
-  const object = requireObject(value);
-  const mode = requiredEnum(object["mode"], "mode", /* @__PURE__ */ new Set(["paths", "content"]));
-  rejectUnknownFields(object, mode === "content" ? CONTENT_SEARCH_FIELDS : SEARCH_COMMON_FIELDS);
-  const include = optionalStringArray(object["include"], "include");
-  const exclude = optionalStringArray(object["exclude"], "exclude");
-  const suppliedLimits = optionalLimitsObject(object["limits"]);
-  const effectiveLimits = validateLimits(object["limits"]);
-  if (mode === "paths") {
-    const projection2 = optionalEnum(object["projection"], "projection", PATH_PROJECTIONS, "files", "projection_not_supported");
-    const facets2 = validateFacets(object["facets"], projection2);
-    validateApplicableLimits(suppliedLimits, applicableSearchLimits("paths", projection2));
-    return {
-      mode,
-      projection: projection2,
-      include,
-      exclude,
-      facets: facets2,
-      effectiveLimits
-    };
-  }
-  const projection = optionalEnum(object["projection"], "projection", CONTENT_PROJECTIONS, "matches", "projection_not_supported");
-  const pattern = requiredString(object["pattern"], "pattern");
-  validateContentPattern(pattern);
-  const syntax = optionalEnum(object["syntax"], "syntax", /* @__PURE__ */ new Set(["literal", "regex"]), "literal");
-  const beforeContext = optionalNonNegativeInteger(object["beforeContext"], "beforeContext", 0);
-  const afterContext = optionalNonNegativeInteger(object["afterContext"], "afterContext", 0);
-  if (projection !== "matches" && (object["beforeContext"] !== void 0 || object["afterContext"] !== void 0)) {
-    throw validationError("field_not_applicable", "beforeContext and afterContext apply only to matches projection", { projection });
-  }
-  const facets = validateFacets(object["facets"], projection);
-  validateApplicableLimits(suppliedLimits, applicableSearchLimits("content", projection));
-  return {
-    mode,
-    projection,
-    pattern,
-    syntax,
-    caseSensitive: optionalBoolean(object["caseSensitive"], "caseSensitive", true),
-    beforeContext,
-    afterContext,
-    include,
-    exclude,
-    facets,
-    effectiveLimits
-  };
-}
-function validateReadRequest(value) {
-  const object = requireObject(value);
-  rejectUnknownFields(object, /* @__PURE__ */ new Set(["items", "limits"]));
-  if (!Array.isArray(object["items"]) || object["items"].length === 0) {
-    throw validationError("invalid_items", "items must be a non-empty array", { field: "items" });
-  }
-  const suppliedLimits = optionalLimitsObject(object["limits"]);
-  const effectiveLimits = validateLimits(object["limits"]);
-  validateApplicableLimits(suppliedLimits, READ_LIMITS);
-  return {
-    items: object["items"].map((item, index) => validateReadItem(item, index)),
-    effectiveLimits
-  };
-}
-function validateCreateRequest(value) {
-  const object = requireObject(value);
-  rejectUnknownFields(object, /* @__PURE__ */ new Set(["path", "content", "writeAs"]));
-  const writeAs = validateCreateWriteAs(object["writeAs"]);
-  return {
-    path: validateWorkspacePath(object["path"], "path", true),
-    content: requiredString(object["content"], "content"),
-    writeAs
-  };
-}
-function validateUpdateRequest(value) {
-  const object = requireObject(value);
-  rejectUnknownFields(object, /* @__PURE__ */ new Set(["path", "expectedRevision", "change", "writeAs"]));
-  return {
-    path: validateWorkspacePath(object["path"], "path", true),
-    expectedRevision: validateRevision(object["expectedRevision"]),
-    change: validateUpdateChange(object["change"]),
-    writeAs: validateUpdateWriteAs(object["writeAs"])
-  };
-}
-function validateDeleteRequest(value) {
-  const object = requireObject(value);
-  rejectUnknownFields(object, /* @__PURE__ */ new Set(["path", "expectedRevision"]));
-  return {
-    path: validateWorkspacePath(object["path"], "path", true),
-    expectedRevision: validateRevision(object["expectedRevision"])
-  };
-}
-function validateWorkspacePath(value, field, mutation) {
-  const path = requiredString(value, field);
-  if (path.includes("\0") || path.includes("\\") || path.startsWith("/") || path.startsWith("//") || /^[A-Za-z]:/u.test(path)) {
-    throw validationError("path_escape", `${field} must be a root-relative JSON path using /`, { field, path });
-  }
-  const segments = path.split("/");
-  if (segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")) {
-    throw validationError("path_escape", `${field} contains an invalid path segment`, { field, path });
-  }
-  if (mutation && segments[0] === ".git") {
-    throw validationError("protected_path", "Mutation under .git is prohibited", { field, path });
-  }
-  return path;
-}
-function validateReadItem(value, index) {
-  const field = `items[${index}]`;
-  const object = requireObject(value, field);
-  rejectUnknownFields(object, /* @__PURE__ */ new Set([
-    "path",
-    "encoding",
-    "full",
-    "range",
-    "firstLines",
-    "lastLines"
-  ]), field);
-  const selectors = ["full", "range", "firstLines", "lastLines"].filter((selector2) => object[selector2] !== void 0);
-  if (selectors.length !== 1) {
-    throw validationError("invalid_selector", `${field} must contain exactly one read selector`, { field, selectors });
-  }
-  let selector;
-  if (object["full"] !== void 0) {
-    if (object["full"] !== true) {
-      throw validationError("invalid_selector", `${field}.full must be true`, { field: `${field}.full` });
-    }
-    selector = { full: true };
-  } else if (object["range"] !== void 0) {
-    const range = requireObject(object["range"], `${field}.range`);
-    rejectUnknownFields(range, /* @__PURE__ */ new Set(["startLine", "endLine"]), `${field}.range`);
-    const startLine = positiveInteger(range["startLine"], `${field}.range.startLine`);
-    const endLine = positiveInteger(range["endLine"], `${field}.range.endLine`);
-    if (startLine > endLine) {
-      throw validationError("invalid_range", `${field}.range.startLine must not exceed endLine`, { field: `${field}.range`, startLine, endLine });
-    }
-    selector = { range: { startLine, endLine } };
-  } else if (object["firstLines"] !== void 0) {
-    selector = {
-      firstLines: positiveInteger(object["firstLines"], `${field}.firstLines`)
-    };
-  } else {
-    selector = {
-      lastLines: positiveInteger(object["lastLines"], `${field}.lastLines`)
-    };
-  }
-  return {
-    path: validateWorkspacePath(object["path"], `${field}.path`, false),
-    encoding: object["encoding"] === void 0 ? void 0 : requiredEnum(object["encoding"], `${field}.encoding`, ENCODINGS),
-    selector
-  };
-}
-function validateCreateWriteAs(value) {
-  if (value === void 0) {
-    return { encoding: "utf-8", lineEnding: "lf", bom: false };
-  }
-  const object = requireObject(value, "writeAs");
-  rejectUnknownFields(object, /* @__PURE__ */ new Set(["encoding", "lineEnding", "bom"]), "writeAs");
-  return {
-    encoding: optionalEnum(object["encoding"], "writeAs.encoding", ENCODINGS, "utf-8"),
-    lineEnding: optionalEnum(object["lineEnding"], "writeAs.lineEnding", /* @__PURE__ */ new Set(["lf", "crlf", "cr"]), "lf"),
-    bom: optionalBoolean(object["bom"], "writeAs.bom", false)
-  };
-}
-function validateUpdateWriteAs(value) {
-  if (value === void 0) {
-    return {
-      encoding: "preserve",
-      lineEnding: "preserve",
-      bom: "preserve"
-    };
-  }
-  const object = requireObject(value, "writeAs");
-  rejectUnknownFields(object, /* @__PURE__ */ new Set(["encoding", "lineEnding", "bom"]), "writeAs");
-  return {
-    encoding: optionalEnum(object["encoding"], "writeAs.encoding", /* @__PURE__ */ new Set(["preserve", ...ENCODINGS]), "preserve"),
-    lineEnding: optionalEnum(object["lineEnding"], "writeAs.lineEnding", /* @__PURE__ */ new Set(["preserve", "lf", "crlf", "cr"]), "preserve"),
-    bom: object["bom"] === void 0 ? "preserve" : object["bom"] === "preserve" || typeof object["bom"] === "boolean" ? object["bom"] : invalidField("writeAs.bom", 'must be boolean or "preserve"', object["bom"])
-  };
-}
-function validateUpdateChange(value) {
-  const object = requireObject(value, "change");
-  const type = requiredEnum(object["type"], "change.type", /* @__PURE__ */ new Set(["context-diff", "replace", "transcode"]));
-  if (type === "context-diff") {
-    rejectUnknownFields(object, /* @__PURE__ */ new Set(["type", "diff"]), "change");
-    return {
-      type,
-      diff: requiredString(object["diff"], "change.diff")
-    };
-  }
-  if (type === "replace") {
-    rejectUnknownFields(object, /* @__PURE__ */ new Set(["type", "content"]), "change");
-    return {
-      type,
-      content: requiredString(object["content"], "change.content")
-    };
-  }
-  rejectUnknownFields(object, /* @__PURE__ */ new Set(["type"]), "change");
-  return { type };
-}
-function validateFacets(value, projection) {
-  if (value === void 0) {
-    return projection === "summary" ? ["extension", "topLevelPath"] : [];
-  }
-  if (projection !== "summary") {
-    throw validationError("field_not_applicable", "facets apply only to summary projection", { projection });
-  }
-  if (!Array.isArray(value) || value.length === 0) {
-    throw validationError("invalid_facets", "facets must be a non-empty array", { field: "facets" });
-  }
-  const facets = value.map((facet, index) => requiredEnum(facet, `facets[${index}]`, FACETS));
-  if (new Set(facets).size !== facets.length) {
-    throw validationError("invalid_facets", "facets must not contain duplicates", { field: "facets" });
-  }
-  return facets;
-}
-function applicableSearchLimits(mode, projection) {
-  const names = new Set(SEARCH_LIMITS_EVERYWHERE);
-  if (mode === "content") {
-    names.add("maxSourceBytes");
-  }
-  if (projection === "matches") {
-    names.add("maxTextCharsReturned");
-    names.add("maxMatches");
-    names.add("maxMatchesPerFile");
-  } else if (projection === "files") {
-    names.add("maxFilesReturned");
-  } else if (projection === "summary") {
-    names.add("maxFacetValues");
-  }
-  return names;
-}
-function optionalLimitsObject(value) {
-  return value === void 0 ? {} : requireObject(value, "limits");
-}
-function validateApplicableLimits(supplied, applicable) {
-  const invalid = Object.keys(supplied).filter((name) => !applicable.has(name));
-  if (invalid.length > 0) {
-    throw validationError("field_not_applicable", `Limit ${invalid[0]} does not apply to the selected operation`, { field: `limits.${invalid[0]}` });
-  }
-}
-function validateContentPattern(pattern) {
-  const length = Array.from(pattern).length;
-  if (length === 0) {
-    throw validationError("pattern_empty", "pattern must not be empty", {
-      field: "pattern"
-    });
-  }
-  if (length > 4096) {
-    throw validationError("pattern_too_large", "pattern must not exceed 4096 Unicode scalars", { field: "pattern", length });
-  }
-  if (pattern.includes("\r") || pattern.includes("\n")) {
-    throw validationError("regex_syntax_error", "pattern must not contain CR or LF", { field: "pattern" });
-  }
-}
-function validateRevision(value) {
-  const revision = requiredString(value, "expectedRevision");
-  if (!/^sha256:[0-9a-f]{64}$/u.test(revision)) {
-    throw validationError("invalid_revision", "expectedRevision must be sha256 followed by 64 lowercase hex digits", { field: "expectedRevision" });
-  }
-  return revision;
-}
-function optionalStringArray(value, field) {
-  if (value === void 0) {
-    return [];
-  }
-  if (!Array.isArray(value) || value.length === 0) {
-    throw validationError("invalid_type", `${field} must be a non-empty string array`, { field });
-  }
-  return value.map((item, index) => {
-    const text = requiredString(item, `${field}[${index}]`);
-    if (text.includes("\0") || text.includes("\\")) {
-      throw validationError("invalid_glob", `${field}[${index}] must use / and contain no NUL`, { field: `${field}[${index}]` });
-    }
-    return text;
-  });
-}
-function requiredString(value, field) {
-  if (typeof value !== "string") {
-    return invalidField(field, "must be a string", value);
-  }
-  return value;
-}
-function optionalBoolean(value, field, fallback) {
-  if (value === void 0) {
-    return fallback;
-  }
-  if (typeof value !== "boolean") {
-    return invalidField(field, "must be boolean", value);
-  }
-  return value;
-}
-function positiveInteger(value, field) {
-  if (!Number.isSafeInteger(value) || value <= 0) {
-    return invalidField(field, "must be a positive safe integer", value);
-  }
-  return value;
-}
-function optionalNonNegativeInteger(value, field, fallback) {
-  if (value === void 0) {
-    return fallback;
-  }
-  if (!Number.isSafeInteger(value) || value < 0) {
-    return invalidField(field, "must be a non-negative safe integer", value);
-  }
-  return value;
-}
-function requiredEnum(value, field, values, code = "invalid_value") {
-  if (typeof value !== "string" || !values.has(value)) {
-    throw validationError(code, `${field} has an unsupported value`, {
-      field,
-      value,
-      allowed: [...values]
-    });
-  }
-  return value;
-}
-function optionalEnum(value, field, values, fallback, code = "invalid_value") {
-  return value === void 0 ? fallback : requiredEnum(value, field, values, code);
-}
-function invalidField(field, expectation, value) {
-  throw validationError("invalid_type", `${field} ${expectation}`, {
-    field,
-    value
-  });
-}
-function validationError(code, message, details) {
-  const diagnostic = {
-    severity: "error",
-    code,
-    message,
-    details
-  };
-  return new RequestValidationError([diagnostic]);
-}
-
-// dist/src/text/logical-lines.js
-function parseLogicalText(text) {
-  const lines = [];
-  const newlineKinds = /* @__PURE__ */ new Set();
-  let lineStart = 0;
-  let lineNumber = 1;
-  for (let index = 0; index < text.length; index += 1) {
-    const character = text[index];
-    if (character !== "\r" && character !== "\n") {
-      continue;
-    }
-    let newline;
-    if (character === "\r" && text[index + 1] === "\n") {
-      newline = "\r\n";
-      index += 1;
-    } else {
-      newline = character;
-    }
-    const newlineStart = newline === "\r\n" ? index - 1 : index;
-    lines.push({
-      number: lineNumber,
-      text: text.slice(lineStart, newlineStart),
-      newline
-    });
-    newlineKinds.add(newline);
-    lineNumber += 1;
-    lineStart = index + 1;
-  }
-  if (lineStart < text.length) {
-    lines.push({
-      number: lineNumber,
-      text: text.slice(lineStart),
-      newline: null
-    });
-  }
-  return {
-    lines,
-    lineEnding: classifyLineEnding(newlineKinds),
-    finalNewline: text.length > 0 && lineStart === text.length
-  };
-}
-function classifyLineEnding(newlineKinds) {
-  if (newlineKinds.size === 0) {
-    return "none";
-  }
-  if (newlineKinds.size > 1) {
-    return "mixed";
-  }
-  const only = newlineKinds.values().next().value;
-  switch (only) {
-    case "\n":
-      return "lf";
-    case "\r\n":
-      return "crlf";
-    case "\r":
-      return "cr";
-    default:
-      throw new Error("Unreachable newline classification");
-  }
-}
-
-// dist/src/patch/context-diff.js
-var ContextDiffError = class extends Error {
-  code;
-  hunkIndex;
-  constructor(code, message, hunkIndex) {
-    super(message);
-    this.name = "ContextDiffError";
-    this.code = code;
-    this.hunkIndex = hunkIndex;
-  }
-};
-function parseContextDiff(diff) {
-  if (diff.length === 0) {
-    throw syntaxError("A contextual diff must contain at least one hunk");
-  }
-  if (diff.includes("\r")) {
-    throw syntaxError("A contextual diff must not contain CR");
-  }
-  if (!diff.endsWith("\n")) {
-    throw syntaxError("A contextual diff must end with LF");
-  }
-  const physicalLines = diff.slice(0, -1).split("\n");
-  const hunks = [];
-  let currentLines;
-  for (const physicalLine of physicalLines) {
-    if (physicalLine === "@@") {
-      if (currentLines !== void 0) {
-        hunks.push(buildHunk(currentLines, hunks.length));
-      }
-      currentLines = [];
-      continue;
-    }
-    if (physicalLine.startsWith("@@")) {
-      throw syntaxError("A hunk header must be exactly @@");
-    }
-    if (currentLines === void 0) {
-      throw syntaxError("Patch content must begin with a @@ hunk header");
-    }
-    const indicator = physicalLine[0];
-    const text = physicalLine.slice(1);
-    switch (indicator) {
-      case " ":
-        currentLines.push({ kind: "context", text });
-        break;
-      case "-":
-        currentLines.push({ kind: "remove", text });
-        break;
-      case "+":
-        currentLines.push({ kind: "add", text });
-        break;
-      default:
-        throw syntaxError("Every hunk body line must begin with space, -, or +");
-    }
-  }
-  if (currentLines === void 0) {
-    throw syntaxError("A contextual diff must contain a @@ hunk header");
-  }
-  hunks.push(buildHunk(currentLines, hunks.length));
-  return { hunks };
-}
-function applyContextDiff(sourceText, diff, lineEnding = "preserve") {
-  const patch = typeof diff === "string" ? parseContextDiff(diff) : diff;
-  const source = parseLogicalText(sourceText);
-  const preferredFileNewline = dominantNewline(source.lines);
-  const located = patch.hunks.map((hunk, hunkIndex) => locateHunk(source.lines, hunk, hunkIndex, preferredFileNewline));
-  validateHunkInteraction(located);
-  const output = [];
-  let sourceIndex = 0;
-  let linesAdded = 0;
-  let linesRemoved = 0;
-  for (const locatedHunk of located) {
-    appendOriginalRange(output, source.lines, sourceIndex, locatedHunk.start);
-    let hunkSourceIndex = locatedHunk.start;
-    for (const patchLine of locatedHunk.hunk.lines) {
-      switch (patchLine.kind) {
-        case "context": {
-          const original = source.lines[hunkSourceIndex];
-          if (original === void 0) {
-            throw new Error("Located hunk exceeded its source range");
-          }
-          output.push({
-            text: original.text,
-            newline: original.newline,
-            hunkIndex: locatedHunk.hunkIndex
-          });
-          hunkSourceIndex += 1;
-          break;
-        }
-        case "remove":
-          hunkSourceIndex += 1;
-          linesRemoved += 1;
-          break;
-        case "add":
-          output.push({
-            text: patchLine.text,
-            newline: null,
-            hunkIndex: locatedHunk.hunkIndex
-          });
-          linesAdded += 1;
-          break;
-      }
-    }
-    sourceIndex = locatedHunk.end;
-  }
-  appendOriginalRange(output, source.lines, sourceIndex, source.lines.length);
-  if (output.length === 0) {
-    throw new ContextDiffError("patch_requires_replace", "A contextual diff cannot produce an empty file; use replace");
-  }
-  assignOutputNewlines(output, located, lineEnding, source.finalNewline, preferredFileNewline);
-  return {
-    text: serializeOutputLines(output),
-    hunksApplied: located.length,
-    linesAdded,
-    linesRemoved
-  };
-}
-function buildHunk(lines, hunkIndex) {
-  if (lines.length === 0) {
-    throw syntaxError("A hunk must contain at least one body line", hunkIndex);
-  }
-  if (!lines.some((line) => line.kind === "add" || line.kind === "remove")) {
-    throw syntaxError("A hunk must contain at least one changed line", hunkIndex);
-  }
-  const sourceLines = lines.filter((line) => line.kind !== "add").map((line) => line.text);
-  if (sourceLines.length === 0) {
-    throw new ContextDiffError("patch_requires_replace", "An addition-only hunk requires a context anchor; use replace", hunkIndex);
-  }
-  return {
-    lines: [...lines],
-    sourceLines,
-    replacementLines: lines.filter((line) => line.kind !== "remove").map((line) => line.text)
-  };
-}
-function locateHunk(sourceLines, hunk, hunkIndex, preferredFileNewline) {
-  const starts = [];
-  const finalStart = sourceLines.length - hunk.sourceLines.length;
-  for (let start2 = 0; start2 <= finalStart; start2 += 1) {
-    if (hunk.sourceLines.every((text, offset) => sourceLines[start2 + offset]?.text === text)) {
-      starts.push(start2);
-    }
-  }
-  if (starts.length === 0) {
-    throw new ContextDiffError("patch_context_mismatch", `Hunk ${hunkIndex} did not match the original file`, hunkIndex);
-  }
-  if (starts.length > 1) {
-    throw new ContextDiffError("patch_ambiguous", `Hunk ${hunkIndex} matched more than one location`, hunkIndex);
-  }
-  const start = starts[0];
-  const end = start + hunk.sourceLines.length;
-  return {
-    hunk,
-    hunkIndex,
-    start,
-    end,
-    preferredNewline: selectHunkNewline(sourceLines, hunk, start, end, preferredFileNewline)
-  };
-}
-function validateHunkInteraction(located) {
-  for (let index = 1; index < located.length; index += 1) {
-    const previous = located[index - 1];
-    const current = located[index];
-    if (rangesOverlap(previous.start, previous.end, current.start, current.end)) {
-      throw new ContextDiffError("patch_hunks_overlap", `Hunks ${previous.hunkIndex} and ${current.hunkIndex} overlap`, current.hunkIndex);
-    }
-    if (current.start < previous.start) {
-      throw new ContextDiffError("patch_hunks_out_of_order", `Hunk ${current.hunkIndex} occurs before the previous hunk`, current.hunkIndex);
-    }
-  }
-}
-function rangesOverlap(leftStart, leftEnd, rightStart, rightEnd) {
-  return leftStart < rightEnd && rightStart < leftEnd;
-}
-function selectHunkNewline(sourceLines, hunk, start, end, preferredFileNewline) {
-  let sourceOffset = 0;
-  for (const line of hunk.lines) {
-    if (line.kind === "add") {
-      continue;
-    }
-    const original = sourceLines[start + sourceOffset];
-    if (line.kind === "remove" && original !== void 0 && original.newline !== null) {
-      return original.newline;
-    }
-    sourceOffset += 1;
-  }
-  const preceding = nearestPrecedingNewline(sourceLines, start);
-  if (preceding !== void 0) {
-    return preceding;
-  }
-  const following = nearestFollowingNewline(sourceLines, end);
-  return following ?? preferredFileNewline;
-}
-function nearestPrecedingNewline(lines, start) {
-  for (let index = start - 1; index >= 0; index -= 1) {
-    const newline = lines[index]?.newline;
-    if (newline !== null && newline !== void 0) {
-      return newline;
-    }
-  }
-  return void 0;
-}
-function nearestFollowingNewline(lines, end) {
-  for (let index = end; index < lines.length; index += 1) {
-    const newline = lines[index]?.newline;
-    if (newline !== null && newline !== void 0) {
-      return newline;
-    }
-  }
-  return void 0;
-}
-function dominantNewline(lines) {
-  const counts = /* @__PURE__ */ new Map();
-  for (const [index, line] of lines.entries()) {
-    if (line.newline === null) {
-      continue;
-    }
-    const current = counts.get(line.newline);
-    counts.set(line.newline, {
-      count: (current?.count ?? 0) + 1,
-      first: current?.first ?? index
-    });
-  }
-  const selected = [...counts.entries()].sort((left, right) => {
-    const countDifference = right[1].count - left[1].count;
-    return countDifference !== 0 ? countDifference : left[1].first - right[1].first;
-  })[0];
-  return selected?.[0] ?? "\n";
-}
-function appendOriginalRange(output, source, start, end) {
-  for (let index = start; index < end; index += 1) {
-    const line = source[index];
-    if (line !== void 0) {
-      output.push({ text: line.text, newline: line.newline });
-    }
-  }
-}
-function assignOutputNewlines(output, located, lineEnding, originalFinalNewline, preferredFileNewline) {
-  const explicit = explicitNewline(lineEnding);
-  const lastIndex = output.length - 1;
-  for (const [index, line] of output.entries()) {
-    const isLast = index === lastIndex;
-    if (explicit !== void 0) {
-      line.newline = isLast && !originalFinalNewline ? null : explicit;
-      continue;
-    }
-    if (isLast && !originalFinalNewline) {
-      line.newline = null;
-      continue;
-    }
-    if (line.newline === null) {
-      line.newline = line.hunkIndex === void 0 ? preferredFileNewline : located[line.hunkIndex]?.preferredNewline ?? preferredFileNewline;
-    }
-  }
-}
-function explicitNewline(lineEnding) {
-  switch (lineEnding) {
-    case "preserve":
-      return void 0;
-    case "lf":
-      return "\n";
-    case "crlf":
-      return "\r\n";
-    case "cr":
-      return "\r";
-  }
-}
-function serializeOutputLines(lines) {
-  return lines.map((line) => `${line.text}${line.newline ?? ""}`).join("");
-}
-function syntaxError(message, hunkIndex) {
-  return new ContextDiffError("patch_syntax_error", message, hunkIndex);
-}
+// dist/src/config/repository-policy.js
+import { readFile as readFile2 } from "node:fs/promises";
 
 // dist/src/text/encoding.js
 var import_iconv_lite = __toESM(require_lib(), 1);
 var TextDecodingError = class extends Error {
   encoding;
-  constructor(encoding, message) {
+  byteOffset;
+  constructor(encoding, message, byteOffset) {
     super(message);
     this.name = "TextDecodingError";
     this.encoding = encoding;
+    this.byteOffset = byteOffset;
   }
 };
 var TextEncodingError = class extends Error {
   encoding;
-  constructor(encoding, message) {
+  characterOffset;
+  constructor(encoding, message, characterOffset) {
     super(message);
     this.name = "TextEncodingError";
     this.encoding = encoding;
+    this.characterOffset = characterOffset;
   }
 };
 function decodeStrict(bytes, encoding) {
+  const invalidOffset = firstInvalidByteOffset(bytes, encoding);
+  if (invalidOffset !== void 0) {
+    throw new TextDecodingError(encoding, `Input is not valid ${encoding} at byte offset ${invalidOffset}`, invalidOffset);
+  }
   switch (encoding) {
     case "utf-8":
       return decodeWithTextDecoder(bytes, "utf-8", encoding);
@@ -4521,6 +3843,10 @@ function decodeStrict(bytes, encoding) {
   }
 }
 function encodeStrict(text, encoding) {
+  const invalidScalar = firstUnpairedSurrogate(text);
+  if (invalidScalar !== void 0) {
+    throw new TextEncodingError(encoding, `Text contains an unpaired surrogate at character offset ${invalidScalar.characterOffset}`, invalidScalar.characterOffset);
+  }
   switch (encoding) {
     case "utf-8":
       return Buffer.from(text, "utf8");
@@ -4532,14 +3858,14 @@ function encodeStrict(text, encoding) {
       return encodeWindows31j(text);
   }
 }
-function decodeWithTextDecoder(bytes, decoderEncoding, canonicalEncoding) {
+function decodeWithTextDecoder(bytes, decoderEncoding, canonicalEncoding2) {
   try {
     return new TextDecoder(decoderEncoding, {
       fatal: true,
       ignoreBOM: false
     }).decode(bytes);
   } catch (cause) {
-    throw new TextDecodingError(canonicalEncoding, `Input is not valid ${canonicalEncoding}: ${errorMessage(cause)}`);
+    throw new TextDecodingError(canonicalEncoding2, `Input is not valid ${canonicalEncoding2}: ${errorMessage(cause)}`);
   }
 }
 function decodeUtf16Be(bytes) {
@@ -4550,7 +3876,7 @@ function decodeWindows31j(bytes) {
   const buffer = Buffer.from(bytes);
   const decoded = import_iconv_lite.default.decode(buffer, "windows-31j");
   if (decoded.includes("\uFFFD")) {
-    throw new TextDecodingError("windows-31j", "Input contains a malformed windows-31j byte sequence");
+    throw new TextDecodingError("windows-31j", "Input contains a malformed windows-31j byte sequence", firstInvalidWindows31jOffset(bytes));
   }
   return decoded;
 }
@@ -4558,14 +3884,135 @@ function encodeWindows31j(text) {
   const encoded = import_iconv_lite.default.encode(text, "windows-31j");
   const decoded = import_iconv_lite.default.decode(encoded, "windows-31j");
   if (decoded !== text) {
-    throw new TextEncodingError("windows-31j", "Text contains characters that are not representable in windows-31j");
+    const characterOffset = firstWindows31jEncodingFailure(text);
+    throw new TextEncodingError("windows-31j", `Text contains a character that is not representable in windows-31j at character offset ${characterOffset}`, characterOffset);
   }
   return encoded;
 }
 function requireEvenByteLength(bytes, encoding) {
   if (bytes.byteLength % 2 !== 0) {
-    throw new TextDecodingError(encoding, `Input byte length must be even for ${encoding}`);
+    throw new TextDecodingError(encoding, `Input byte length must be even for ${encoding}`, Math.max(0, bytes.byteLength - 1));
   }
+}
+function firstUnpairedSurrogate(text) {
+  let characterOffset = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const unit = text.charCodeAt(index);
+    if (unit >= 55296 && unit <= 56319) {
+      const next = text.charCodeAt(index + 1);
+      if (!(next >= 56320 && next <= 57343)) {
+        return { codeUnitOffset: index, characterOffset };
+      }
+      index += 1;
+    } else if (unit >= 56320 && unit <= 57343) {
+      return { codeUnitOffset: index, characterOffset };
+    }
+    characterOffset += 1;
+  }
+  return void 0;
+}
+function firstInvalidByteOffset(bytes, encoding) {
+  switch (encoding) {
+    case "utf-8":
+      return firstInvalidUtf8Offset(bytes);
+    case "utf-16le":
+      return firstInvalidUtf16Offset(bytes, false);
+    case "utf-16be":
+      return firstInvalidUtf16Offset(bytes, true);
+    case "windows-31j":
+      return firstInvalidWindows31jOffset(bytes);
+  }
+}
+function firstInvalidUtf8Offset(bytes) {
+  for (let index = 0; index < bytes.length; ) {
+    const first = bytes[index];
+    if (first <= 127) {
+      index += 1;
+      continue;
+    }
+    let length;
+    let secondMinimum = 128;
+    let secondMaximum = 191;
+    if (first >= 194 && first <= 223) {
+      length = 2;
+    } else if (first >= 224 && first <= 239) {
+      length = 3;
+      if (first === 224)
+        secondMinimum = 160;
+      if (first === 237)
+        secondMaximum = 159;
+    } else if (first >= 240 && first <= 244) {
+      length = 4;
+      if (first === 240)
+        secondMinimum = 144;
+      if (first === 244)
+        secondMaximum = 143;
+    } else {
+      return index;
+    }
+    if (index + length > bytes.length) {
+      return index;
+    }
+    const second = bytes[index + 1];
+    if (second < secondMinimum || second > secondMaximum) {
+      return index + 1;
+    }
+    for (let offset = 2; offset < length; offset += 1) {
+      const continuation = bytes[index + offset];
+      if (continuation < 128 || continuation > 191) {
+        return index + offset;
+      }
+    }
+    index += length;
+  }
+  return void 0;
+}
+function firstInvalidUtf16Offset(bytes, bigEndian) {
+  if (bytes.length % 2 !== 0) {
+    return bytes.length - 1;
+  }
+  const unitAt = (offset) => bigEndian ? bytes[offset] << 8 | bytes[offset + 1] : bytes[offset] | bytes[offset + 1] << 8;
+  for (let offset = 0; offset < bytes.length; offset += 2) {
+    const unit = unitAt(offset);
+    if (unit >= 55296 && unit <= 56319) {
+      if (offset + 3 >= bytes.length) {
+        return offset;
+      }
+      const next = unitAt(offset + 2);
+      if (next < 56320 || next > 57343) {
+        return offset;
+      }
+      offset += 2;
+    } else if (unit >= 56320 && unit <= 57343) {
+      return offset;
+    }
+  }
+  return void 0;
+}
+function firstInvalidWindows31jOffset(bytes) {
+  for (let index = 0; index < bytes.length; ) {
+    const first = bytes[index];
+    const lead = first >= 129 && first <= 159 || first >= 224 && first <= 252;
+    const length = lead ? 2 : 1;
+    if (index + length > bytes.length) {
+      return index;
+    }
+    const decoded = import_iconv_lite.default.decode(Buffer.from(bytes.subarray(index, index + length)), "windows-31j");
+    if (decoded.includes("\uFFFD")) {
+      return index;
+    }
+    index += length;
+  }
+  return void 0;
+}
+function firstWindows31jEncodingFailure(text) {
+  for (const [index, scalar] of Array.from(text).entries()) {
+    const encoded = import_iconv_lite.default.encode(scalar, "windows-31j");
+    if (import_iconv_lite.default.decode(encoded, "windows-31j") !== scalar) {
+      return index;
+    }
+  }
+  return 0;
 }
 function swapUtf16ByteOrder(bytes) {
   const swapped = new Uint8Array(bytes.byteLength);
@@ -4578,698 +4025,6 @@ function swapUtf16ByteOrder(bytes) {
 function errorMessage(value) {
   return value instanceof Error ? value.message : String(value);
 }
-
-// dist/src/text/text-file.js
-import { createHash } from "node:crypto";
-var TextFileError = class extends Error {
-  code;
-  encoding;
-  constructor(code, message, encoding) {
-    super(message);
-    this.name = "TextFileError";
-    this.code = code;
-    this.encoding = encoding;
-  }
-};
-function decodeTextFile(bytes, options = {}) {
-  const bomEncoding = detectBom(bytes);
-  const requestedEncoding = options.explicitEncoding ?? options.repositoryEncoding;
-  if (requestedEncoding !== void 0 && bomEncoding !== void 0 && requestedEncoding !== bomEncoding) {
-    throw new TextFileError("encoding_conflict", `Requested ${requestedEncoding} conflicts with ${bomEncoding} BOM`, requestedEncoding);
-  }
-  let encoding;
-  let encodingSource;
-  if (options.explicitEncoding !== void 0) {
-    encoding = options.explicitEncoding;
-    encodingSource = "explicit";
-  } else if (options.repositoryEncoding !== void 0) {
-    encoding = options.repositoryEncoding;
-    encodingSource = "repositoryRule";
-  } else if (bomEncoding !== void 0) {
-    encoding = bomEncoding;
-    encodingSource = "bom";
-  } else {
-    try {
-      const text = decodeStrict(bytes, "utf-8");
-      return buildDecodedFile(bytes, text, "utf-8", "strictUtf8", false);
-    } catch (error) {
-      if (!(error instanceof TextDecodingError) || options.legacyFallback === void 0) {
-        throw new TextFileError("encoding_undetermined", "Input has no recognized BOM and is not valid UTF-8");
-      }
-      encoding = options.legacyFallback;
-      encodingSource = "legacyFallback";
-    }
-  }
-  try {
-    return buildDecodedFile(bytes, decodeStrict(bytes, encoding), encoding, encodingSource, bomEncoding !== void 0);
-  } catch (error) {
-    if (error instanceof TextDecodingError) {
-      throw new TextFileError("decode_error", error.message, encoding);
-    }
-    throw error;
-  }
-}
-function rawByteRevision(bytes) {
-  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
-}
-function detectBom(bytes) {
-  if (bytes[0] === 239 && bytes[1] === 187 && bytes[2] === 191) {
-    return "utf-8";
-  }
-  if (bytes[0] === 255 && bytes[1] === 254) {
-    return "utf-16le";
-  }
-  if (bytes[0] === 254 && bytes[1] === 255) {
-    return "utf-16be";
-  }
-  return void 0;
-}
-function buildDecodedFile(bytes, text, encoding, encodingSource, bom) {
-  const logicalText = parseLogicalText(text);
-  return {
-    text,
-    logicalText,
-    revision: rawByteRevision(bytes),
-    encoding,
-    encodingSource,
-    bom,
-    rawBytes: bytes.byteLength,
-    lineEnding: logicalText.lineEnding,
-    finalNewline: logicalText.finalNewline,
-    logicalLines: logicalText.lines.length
-  };
-}
-
-// dist/src/core/mutate.js
-var MutationError = class extends Error {
-  code;
-  constructor(code, message) {
-    super(message);
-    this.name = "MutationError";
-    this.code = code;
-  }
-};
-async function executeCreate(workspace, input) {
-  const request = validateCreateRequest(input);
-  const target = await workspace.resolveCreateTarget(request.path);
-  const formatted = normalizeLineEndings(request.content, request.writeAs.lineEnding);
-  const bytes = encodeWithBom(formatted, request.writeAs.encoding, request.writeAs.bom);
-  let handle;
-  try {
-    handle = await open(target, "wx");
-    await handle.writeFile(bytes);
-    await handle.sync();
-  } catch (error) {
-    if (isNodeCode(error, "EEXIST")) {
-      throw new MutationError("target_exists", "Create target already exists");
-    }
-    throw error;
-  } finally {
-    await handle?.close();
-  }
-  return {
-    path: request.path,
-    revision: rawByteRevision(bytes),
-    encoding: request.writeAs.encoding,
-    lineEnding: request.writeAs.lineEnding,
-    bom: request.writeAs.bom,
-    writtenBytes: bytes.byteLength
-  };
-}
-async function executeUpdate(workspace, input, options = {}) {
-  const request = validateUpdateRequest(input);
-  const target = await workspace.resolveExistingFile(request.path);
-  const originalBytes = await readFile(target);
-  const oldRevision = rawByteRevision(originalBytes);
-  assertRevision(request.expectedRevision, oldRevision);
-  const repositoryEncoding = options.repositoryEncoding?.(request.path);
-  const decoded = decodeTextFile(originalBytes, {
-    ...repositoryEncoding === void 0 ? {} : { repositoryEncoding },
-    ...options.legacyFallback === void 0 ? {} : { legacyFallback: options.legacyFallback }
-  });
-  let resultText = decoded.text;
-  let appliedHunks = 0;
-  let addedLines = 0;
-  let removedLines = 0;
-  if (request.change.type === "context-diff") {
-    const applied = applyContextDiff(decoded.text, request.change.diff, request.writeAs.lineEnding);
-    resultText = applied.text;
-    appliedHunks = applied.hunksApplied;
-    addedLines = applied.linesAdded;
-    removedLines = applied.linesRemoved;
-  } else if (request.change.type === "replace") {
-    const originalLogical = parseLogicalText(decoded.text);
-    const replacementLogical = parseLogicalText(request.change.content);
-    resultText = formatReplacement(originalLogical, replacementLogical, request.writeAs.lineEnding);
-    addedLines = replacementLogical.lines.length;
-    removedLines = originalLogical.lines.length;
-  } else if (request.writeAs.lineEnding !== "preserve") {
-    resultText = normalizeLineEndings(decoded.text, request.writeAs.lineEnding);
-  }
-  const encoding = request.writeAs.encoding === "preserve" ? decoded.encoding : request.writeAs.encoding;
-  const bom = request.writeAs.bom === "preserve" ? decoded.bom : request.writeAs.bom;
-  const newBytes = encodeWithBom(resultText, encoding, bom);
-  const status = await lstat(target);
-  await atomicRevisionGuardedReplace(target, request.expectedRevision, newBytes, status.mode);
-  return {
-    path: request.path,
-    oldRevision,
-    newRevision: rawByteRevision(newBytes),
-    encoding,
-    lineEnding: request.writeAs.lineEnding === "preserve" ? parseLogicalText(resultText).lineEnding : request.writeAs.lineEnding,
-    bom,
-    appliedHunks,
-    addedLines,
-    removedLines,
-    writtenBytes: newBytes.byteLength
-  };
-}
-async function executeDelete(workspace, input) {
-  const request = validateDeleteRequest(input);
-  const target = await workspace.resolveExistingFile(request.path);
-  const observed = await readFile(target);
-  const oldRevision = rawByteRevision(observed);
-  assertRevision(request.expectedRevision, oldRevision);
-  const rechecked = await readFile(target);
-  assertRevision(request.expectedRevision, rawByteRevision(rechecked));
-  await unlink(target);
-  return { path: request.path, oldRevision };
-}
-function normalizeLineEndings(text, lineEnding) {
-  const newline = newlineSequence(lineEnding);
-  return parseLogicalText(text).lines.map((line) => `${line.text}${line.newline === null ? "" : newline}`).join("");
-}
-function formatReplacement(original, replacement, lineEnding) {
-  if (lineEnding !== "preserve") {
-    const newline = newlineSequence(lineEnding);
-    return joinLogicalLines(replacement, () => newline);
-  }
-  const originalNewlines = original.lines.flatMap((line) => line.newline === null ? [] : [line.newline]);
-  const fallback = dominantNewline2(originalNewlines);
-  if (original.lineEnding !== "mixed") {
-    return joinLogicalLines(replacement, () => fallback);
-  }
-  return joinLogicalLines(replacement, (index) => original.lines[index]?.newline ?? fallback);
-}
-function encodeWithBom(text, encoding, bom) {
-  if (bom && encoding === "windows-31j") {
-    throw new MutationError("encode_error", "windows-31j does not support a BOM");
-  }
-  const encoded = encodeStrict(text, encoding);
-  if (!bom) {
-    return encoded;
-  }
-  const prefix = encoding === "utf-8" ? [239, 187, 191] : encoding === "utf-16le" ? [255, 254] : [254, 255];
-  return Uint8Array.from([...prefix, ...encoded]);
-}
-function joinLogicalLines(logicalText, selectNewline) {
-  return logicalText.lines.map((line, index) => `${line.text}${line.newline === null ? "" : selectNewline(index)}`).join("");
-}
-function dominantNewline2(newlines) {
-  if (newlines.length === 0) {
-    return "\n";
-  }
-  const counts = /* @__PURE__ */ new Map();
-  for (const newline of newlines) {
-    counts.set(newline, (counts.get(newline) ?? 0) + 1);
-  }
-  const maximum = Math.max(...counts.values());
-  return newlines.find((newline) => counts.get(newline) === maximum) ?? "\n";
-}
-async function atomicRevisionGuardedReplace(target, expectedRevision, bytes, mode) {
-  const temporary = join(dirname(target), `.${basename(target)}.miku-text-file-ops-${process.pid}-${randomUUID()}.tmp`);
-  let handle;
-  let renamed = false;
-  try {
-    handle = await open(temporary, "wx", mode & 4095);
-    await handle.writeFile(bytes);
-    await handle.sync();
-    await handle.close();
-    handle = void 0;
-    await chmod(temporary, mode & 4095);
-    const rechecked = await readFile(target);
-    assertRevision(expectedRevision, rawByteRevision(rechecked));
-    await rename(temporary, target);
-    renamed = true;
-  } finally {
-    await handle?.close();
-    if (!renamed) {
-      try {
-        await unlink(temporary);
-      } catch (error) {
-        if (!isNodeCode(error, "ENOENT")) {
-          throw error;
-        }
-      }
-    }
-  }
-}
-function assertRevision(expected, actual) {
-  if (expected !== actual) {
-    throw new MutationError("stale_revision", `Expected revision ${expected}, observed ${actual}`);
-  }
-}
-function newlineSequence(lineEnding) {
-  switch (lineEnding) {
-    case "lf":
-      return "\n";
-    case "crlf":
-      return "\r\n";
-    case "cr":
-      return "\r";
-  }
-}
-function isNodeCode(error, code) {
-  return typeof error === "object" && error !== null && "code" in error && error.code === code;
-}
-
-// dist/src/core/read.js
-import { readFile as readFile2 } from "node:fs/promises";
-
-// dist/src/results/envelope.js
-function createEnvelope(input) {
-  const results = input.results ?? [];
-  const diagnostics = input.diagnostics ?? [];
-  const diagnosticsOmitted = input.diagnosticsOmitted ?? 0;
-  const completenessReasons = [...input.completenessReasons ?? []].sort();
-  const envelope = {
-    schemaVersion: SCHEMA_VERSION,
-    operation: input.operation,
-    status: input.status,
-    completeness: {
-      complete: input.status === "success" && completenessReasons.length === 0,
-      reasons: completenessReasons
-    },
-    results,
-    diagnostics,
-    diagnosticSummary: {
-      returned: diagnostics.length,
-      omitted: diagnosticsOmitted,
-      byCode: summarizeDiagnostics(diagnostics)
-    },
-    usage: {
-      limitProfile: LIMIT_PROFILE,
-      textCharsReturned: countReturnedTextScalars(results),
-      resultBytes: 0,
-      recordsReturned: results.length,
-      diagnosticsReturned: diagnostics.length,
-      diagnosticsOmitted,
-      effectiveLimits: input.effectiveLimits,
-      ...input.usage
-    }
-  };
-  settleResultBytes(envelope);
-  return envelope;
-}
-function serializeCanonicalEnvelope(envelope) {
-  settleResultBytes(envelope);
-  return Buffer.from(`${canonicalStringify(envelope)}
-`, "utf8");
-}
-function settleResultBytes(envelope) {
-  let previous = -1;
-  for (let attempt = 0; attempt < 16; attempt += 1) {
-    const bytes = Buffer.byteLength(`${canonicalStringify(envelope)}
-`, "utf8");
-    envelope.usage.resultBytes = bytes;
-    if (bytes === previous) {
-      return;
-    }
-    previous = bytes;
-  }
-  throw new Error("usage.resultBytes did not converge");
-}
-function summarizeDiagnostics(diagnostics) {
-  const counts = /* @__PURE__ */ new Map();
-  for (const diagnostic of diagnostics) {
-    counts.set(diagnostic.code, (counts.get(diagnostic.code) ?? 0) + 1);
-  }
-  return [...counts].sort(([left], [right]) => compareUnicodeScalars2(left, right)).map(([code, count]) => ({ code, count }));
-}
-function countReturnedTextScalars(value) {
-  let total = 0;
-  visit(value, (key, child) => {
-    if (typeof child === "string" && (key === "text" || key === "beforeContext" || key === "afterContext")) {
-      total += Array.from(child).length;
-    }
-  });
-  return total;
-}
-function visit(value, visitor) {
-  if (Array.isArray(value)) {
-    for (const child of value) {
-      visit(child, visitor);
-    }
-    return;
-  }
-  if (typeof value !== "object" || value === null) {
-    return;
-  }
-  for (const [key, child] of Object.entries(value)) {
-    visitor(key, child);
-    visit(child, visitor);
-  }
-}
-function canonicalStringify(value) {
-  return JSON.stringify(sortObjectKeys(value));
-}
-function sortObjectKeys(value) {
-  if (Array.isArray(value)) {
-    return value.map(sortObjectKeys);
-  }
-  if (typeof value !== "object" || value === null) {
-    return value;
-  }
-  return Object.fromEntries(Object.entries(value).sort(([left], [right]) => compareUnicodeScalars2(left, right)).map(([key, child]) => [key, sortObjectKeys(child)]));
-}
-function compareUnicodeScalars2(left, right) {
-  const leftScalars = Array.from(left);
-  const rightScalars = Array.from(right);
-  const length = Math.min(leftScalars.length, rightScalars.length);
-  for (let index = 0; index < length; index += 1) {
-    const leftCodePoint = leftScalars[index]?.codePointAt(0) ?? 0;
-    const rightCodePoint = rightScalars[index]?.codePointAt(0) ?? 0;
-    if (leftCodePoint !== rightCodePoint) {
-      return leftCodePoint - rightCodePoint;
-    }
-  }
-  return leftScalars.length - rightScalars.length;
-}
-
-// dist/src/core/read.js
-async function executeRead(workspace, input, options = {}) {
-  const request = validateReadRequest(input);
-  const state = {
-    request,
-    works: [],
-    diagnostics: [],
-    diagnosticsOmitted: 0,
-    reasons: /* @__PURE__ */ new Set(),
-    itemsProcessed: 0,
-    itemsSkipped: 0,
-    nextItemIndex: void 0
-  };
-  const maximumItems = request.effectiveLimits.maxItems;
-  const processCount = Math.min(request.items.length, maximumItems);
-  if (request.items.length > processCount) {
-    state.reasons.add("item_limit");
-    state.itemsSkipped += request.items.length - processCount;
-    state.nextItemIndex = processCount;
-  }
-  let textCharsRemaining = request.effectiveLimits.maxTextCharsReturned;
-  for (let itemIndex = 0; itemIndex < processCount; itemIndex += 1) {
-    if (textCharsRemaining === 0) {
-      state.reasons.add("text_char_limit");
-      state.itemsSkipped += processCount - itemIndex;
-      state.nextItemIndex ??= itemIndex;
-      break;
-    }
-    const item = request.items[itemIndex];
-    try {
-      const absolutePath = await workspace.resolveExistingFile(item.path);
-      const bytes = await readFile2(absolutePath);
-      const repositoryEncoding = options.repositoryEncoding?.(item.path);
-      const decoded = decodeTextFile(bytes, {
-        ...item.encoding === void 0 ? {} : { explicitEncoding: item.encoding },
-        ...repositoryEncoding === void 0 ? {} : { repositoryEncoding },
-        ...options.legacyFallback === void 0 ? {} : { legacyFallback: options.legacyFallback }
-      });
-      const work = buildReadWork(item, itemIndex, decoded, request.effectiveLimits.maxLinesPerItem, textCharsRemaining, state);
-      state.works.push(work);
-      state.itemsProcessed += 1;
-      textCharsRemaining -= Array.from(work.record.text).length;
-    } catch (error) {
-      const diagnostic = readDiagnostic(item.path, error);
-      addDiagnostic(state, diagnostic);
-      state.reasons.add(diagnostic.code);
-      state.itemsSkipped += 1;
-    }
-  }
-  enforceResultByteBudget(state);
-  return buildEnvelope(state);
-}
-function buildReadWork(item, itemIndex, decoded, maxLines, textCharsRemaining, state) {
-  const domain = selectedDomain(item.selector, decoded.logicalLines);
-  const direction = "lastLines" in item.selector ? "suffix" : "prefix";
-  const itemReasons = /* @__PURE__ */ new Set();
-  let returned = domain === void 0 ? void 0 : { ...domain };
-  if (returned !== void 0 && rangeLength(returned) > maxLines) {
-    itemReasons.add("line_limit");
-    state.reasons.add("line_limit");
-    returned = direction === "prefix" ? {
-      startLine: returned.startLine,
-      endLine: returned.startLine + maxLines - 1
-    } : {
-      startLine: returned.endLine - maxLines + 1,
-      endLine: returned.endLine
-    };
-  }
-  if (returned !== void 0) {
-    returned = fitTextCharacterBudget(decoded.logicalText.lines, returned, direction, textCharsRemaining, decoded, item, itemReasons, state);
-  }
-  const record = {
-    type: "read",
-    itemIndex,
-    path: item.path,
-    requestedSelection: item.selector,
-    text: renderLines(decoded.logicalText.lines, returned),
-    ...returned === void 0 ? {} : { returnedRange: returned },
-    remainingRanges: remainingRanges(domain, returned),
-    revision: decoded.revision,
-    encoding: decoded.encoding,
-    encodingSource: decoded.encodingSource,
-    bom: decoded.bom,
-    lineEnding: decoded.lineEnding,
-    finalNewline: decoded.finalNewline,
-    rawBytes: decoded.rawBytes,
-    logicalLines: decoded.logicalLines,
-    completeness: {
-      complete: itemReasons.size === 0,
-      reasons: [...itemReasons].sort()
-    }
-  };
-  return {
-    record,
-    lines: decoded.logicalText.lines,
-    domain,
-    direction,
-    returned
-  };
-}
-function fitTextCharacterBudget(lines, requested, direction, remaining, decoded, item, itemReasons, state) {
-  let used = 0;
-  let accepted = 0;
-  const indexes = direction === "prefix" ? sequence(requested.startLine, requested.endLine, 1) : sequence(requested.endLine, requested.startLine, -1);
-  for (const lineNumber of indexes) {
-    const line = lines[lineNumber - 1];
-    const chars = Array.from(`${line.text}${line.newline === null ? "" : "\n"}`).length;
-    if (used + chars > remaining) {
-      if (accepted === 0 && chars > state.request.effectiveLimits.maxTextCharsReturned) {
-        itemReasons.add("line_too_large");
-        state.reasons.add("line_too_large");
-        addDiagnostic(state, {
-          severity: "warning",
-          code: "line_too_large",
-          message: `Logical line ${lineNumber} cannot fit the text budget`,
-          path: item.path,
-          line: lineNumber,
-          details: {
-            textChars: chars,
-            encoding: decoded.encoding
-          }
-        });
-      } else {
-        itemReasons.add("text_char_limit");
-        state.reasons.add("text_char_limit");
-      }
-      break;
-    }
-    used += chars;
-    accepted += 1;
-  }
-  if (accepted === 0) {
-    return void 0;
-  }
-  return direction === "prefix" ? {
-    startLine: requested.startLine,
-    endLine: requested.startLine + accepted - 1
-  } : {
-    startLine: requested.endLine - accepted + 1,
-    endLine: requested.endLine
-  };
-}
-function enforceResultByteBudget(state) {
-  const limit = state.request.effectiveLimits.maxResultBytes;
-  while (serializeCanonicalEnvelope(buildEnvelope(state)).byteLength > limit) {
-    state.reasons.add("result_byte_limit");
-    const work = [...state.works].reverse().find((candidate) => candidate.returned !== void 0);
-    if (work !== void 0) {
-      trimReturnedRange(work);
-      continue;
-    }
-    if (state.works.length > 0) {
-      const removed = state.works.pop();
-      state.itemsProcessed -= 1;
-      state.itemsSkipped += 1;
-      state.nextItemIndex = state.nextItemIndex === void 0 ? removed.record.itemIndex : Math.min(state.nextItemIndex, removed.record.itemIndex);
-      continue;
-    }
-    if (state.diagnostics.length > 0) {
-      state.diagnostics.pop();
-      state.diagnosticsOmitted += 1;
-      continue;
-    }
-    throw new Error("Minimal READ envelope exceeds maxResultBytes");
-  }
-}
-function trimReturnedRange(work) {
-  const returned = work.returned;
-  if (returned.startLine === returned.endLine) {
-    work.returned = void 0;
-    delete work.record.returnedRange;
-  } else if (work.direction === "prefix") {
-    work.returned = {
-      startLine: returned.startLine,
-      endLine: returned.endLine - 1
-    };
-    work.record.returnedRange = work.returned;
-  } else {
-    work.returned = {
-      startLine: returned.startLine + 1,
-      endLine: returned.endLine
-    };
-    work.record.returnedRange = work.returned;
-  }
-  work.record.text = renderLines(work.lines, work.returned);
-  work.record.remainingRanges = remainingRanges(work.domain, work.returned);
-  work.record.completeness = {
-    complete: false,
-    reasons: [.../* @__PURE__ */ new Set([
-      ...work.record.completeness.reasons,
-      "result_byte_limit"
-    ])].sort()
-  };
-}
-function buildEnvelope(state) {
-  const records = state.works.map((work) => work.record);
-  const status = state.reasons.size === 0 ? "success" : records.length > 0 ? "partial" : "failed";
-  return createEnvelope({
-    operation: "read",
-    status,
-    completenessReasons: [...state.reasons],
-    results: records,
-    diagnostics: state.diagnostics,
-    diagnosticsOmitted: state.diagnosticsOmitted,
-    effectiveLimits: state.request.effectiveLimits,
-    usage: {
-      itemsRequested: state.request.items.length,
-      itemsProcessed: state.itemsProcessed,
-      itemsSkipped: state.itemsSkipped,
-      ...state.nextItemIndex === void 0 ? {} : { nextItemIndex: state.nextItemIndex }
-    }
-  });
-}
-function selectedDomain(selector, logicalLines) {
-  if (logicalLines === 0) {
-    return void 0;
-  }
-  if ("full" in selector) {
-    return { startLine: 1, endLine: logicalLines };
-  }
-  if ("range" in selector) {
-    if (selector.range.startLine > logicalLines) {
-      return void 0;
-    }
-    return {
-      startLine: selector.range.startLine,
-      endLine: Math.min(selector.range.endLine, logicalLines)
-    };
-  }
-  if ("firstLines" in selector) {
-    return {
-      startLine: 1,
-      endLine: Math.min(selector.firstLines, logicalLines)
-    };
-  }
-  return {
-    startLine: Math.max(1, logicalLines - selector.lastLines + 1),
-    endLine: logicalLines
-  };
-}
-function remainingRanges(domain, returned) {
-  if (domain === void 0) {
-    return [];
-  }
-  if (returned === void 0) {
-    return [domain];
-  }
-  const ranges2 = [];
-  if (domain.startLine < returned.startLine) {
-    ranges2.push({
-      startLine: domain.startLine,
-      endLine: returned.startLine - 1
-    });
-  }
-  if (returned.endLine < domain.endLine) {
-    ranges2.push({
-      startLine: returned.endLine + 1,
-      endLine: domain.endLine
-    });
-  }
-  return ranges2;
-}
-function renderLines(lines, range) {
-  if (range === void 0) {
-    return "";
-  }
-  return lines.slice(range.startLine - 1, range.endLine).map((line) => `${line.text}${line.newline === null ? "" : "\n"}`).join("");
-}
-function sequence(start, end, step) {
-  const values = [];
-  for (let value = start; step === 1 ? value <= end : value >= end; value += step) {
-    values.push(value);
-  }
-  return values;
-}
-function rangeLength(range) {
-  return range.endLine - range.startLine + 1;
-}
-function addDiagnostic(state, diagnostic) {
-  if (state.diagnostics.length < state.request.effectiveLimits.maxDiagnostics) {
-    state.diagnostics.push(diagnostic);
-  } else {
-    state.diagnosticsOmitted += 1;
-    state.reasons.add("diagnostic_limit");
-  }
-}
-function readDiagnostic(path, error) {
-  if (error instanceof TextFileError) {
-    return {
-      severity: "error",
-      code: error.code,
-      message: error.message,
-      path,
-      ...error.encoding === void 0 ? {} : { details: { encoding: error.encoding } }
-    };
-  }
-  if (typeof error === "object" && error !== null && "code" in error && typeof error.code === "string") {
-    return {
-      severity: "error",
-      code: error.code,
-      message: error instanceof Error ? error.message : String(error),
-      path
-    };
-  }
-  return {
-    severity: "error",
-    code: "source_error",
-    message: error instanceof Error ? error.message : String(error),
-    path
-  };
-}
-
-// dist/src/core/search.js
-import { readFile as readFile3 } from "node:fs/promises";
 
 // dist/src/regex/simple-case-folding-17.js
 var SIMPLE_CASE_FOLDING_PAIRS = new Uint32Array([
@@ -8931,372 +7686,6 @@ function isAsciiWord(value) {
   return scalar >= 48 && scalar <= 57 || scalar >= 65 && scalar <= 90 || scalar === 95 || scalar >= 97 && scalar <= 122;
 }
 
-// dist/src/core/search.js
-async function executeSearch(workspace, input, options = {}) {
-  const request = validateSearchRequest(input);
-  const scan = await workspace.scan({
-    include: request.include,
-    exclude: request.exclude
-  });
-  const state = {
-    request,
-    records: [],
-    diagnostics: [],
-    diagnosticsOmitted: 0,
-    reasons: /* @__PURE__ */ new Set(),
-    filesVisited: 0,
-    bytesRead: 0
-  };
-  for (const diagnostic of scan.diagnostics) {
-    addDiagnostic2(state, diagnostic);
-    state.reasons.add(diagnostic.code);
-  }
-  if (request.mode === "paths") {
-    executePathSearch(state, scan.files);
-  } else {
-    await executeContentSearch(state, scan.files, request, options);
-  }
-  enforceSearchResultByteBudget(state);
-  return buildSearchEnvelope(state);
-}
-function executePathSearch(state, candidates) {
-  const request = state.request;
-  if (request.mode !== "paths") {
-    throw new Error("Path request expected");
-  }
-  const visited = candidates.slice(0, request.effectiveLimits.maxFilesVisited);
-  state.filesVisited = visited.length;
-  let scanComplete = visited.length === candidates.length;
-  if (!scanComplete) {
-    state.reasons.add("file_visit_limit");
-  }
-  let projectionRecords = [];
-  if (request.projection === "files") {
-    const returned = visited.slice(0, request.effectiveLimits.maxFilesReturned);
-    projectionRecords = returned.map((file) => ({
-      type: "file",
-      path: file.path,
-      rawBytes: file.rawBytes
-    }));
-    if (returned.length < visited.length) {
-      scanComplete = false;
-      state.reasons.add("file_result_limit");
-    }
-  } else if (request.projection === "summary") {
-    projectionRecords = buildFacetRecords(request.facets, visited.map((file) => ({ file, matches: 0 })), request.effectiveLimits.maxFacetValues, scanComplete && state.diagnostics.length === 0, false);
-  }
-  const exact = scanComplete && state.diagnostics.length === 0;
-  const filesReturned = projectionRecords.filter((record) => record.type === "file").length;
-  state.records = [
-    {
-      type: "searchSummary",
-      mode: "paths",
-      scanComplete,
-      filesVisited: state.filesVisited,
-      filesMatched: exact ? visited.length : null,
-      filesMatchedAtLeast: exact ? null : visited.length,
-      filesReturned
-    },
-    ...projectionRecords
-  ];
-}
-async function executeContentSearch(state, candidates, request, options) {
-  const matchesLine = buildLineMatcher(request);
-  const projectionRecords = [];
-  const matchedForFacets = [];
-  let scanComplete = true;
-  let filesDecoded = 0;
-  let filesSkipped = 0;
-  let filesMatchedObserved = 0;
-  let matchesObserved = 0;
-  let matchesExact = true;
-  let stopTraversal = false;
-  let textCharsReturned = 0;
-  for (const file of candidates) {
-    if (state.filesVisited >= request.effectiveLimits.maxFilesVisited) {
-      scanComplete = false;
-      state.reasons.add("file_visit_limit");
-      break;
-    }
-    if (state.bytesRead + file.rawBytes > request.effectiveLimits.maxSourceBytes) {
-      scanComplete = false;
-      state.reasons.add("source_byte_limit");
-      break;
-    }
-    state.filesVisited += 1;
-    state.bytesRead += file.rawBytes;
-    let decoded;
-    try {
-      const bytes = await readFile3(file.absolutePath);
-      const repositoryEncoding = options.repositoryEncoding?.(file.path);
-      decoded = decodeTextFile(bytes, {
-        ...repositoryEncoding === void 0 ? {} : { repositoryEncoding },
-        ...options.legacyFallback === void 0 ? {} : { legacyFallback: options.legacyFallback }
-      });
-      filesDecoded += 1;
-    } catch (error) {
-      filesSkipped += 1;
-      const diagnostic = searchDiagnostic(file.path, error);
-      addDiagnostic2(state, diagnostic);
-      state.reasons.add(diagnostic.code);
-      continue;
-    }
-    let fileMatches = 0;
-    let firstMatchLine;
-    for (const line of decoded.logicalText.lines) {
-      if (!matchesLine(line.text)) {
-        continue;
-      }
-      fileMatches += 1;
-      matchesObserved += 1;
-      firstMatchLine ??= line.number;
-      if (request.projection === "files") {
-        matchesExact = false;
-        break;
-      }
-      if (request.projection !== "matches") {
-        continue;
-      }
-      if (fileMatches > request.effectiveLimits.maxMatchesPerFile) {
-        matchesExact = false;
-        state.reasons.add("match_limit");
-        break;
-      }
-      if (projectionRecords.filter((record2) => record2.type === "match").length >= request.effectiveLimits.maxMatches) {
-        scanComplete = false;
-        matchesExact = false;
-        state.reasons.add("match_limit");
-        stopTraversal = true;
-        break;
-      }
-      const record = buildMatchRecord(file.path, line, decoded.logicalText.lines, decoded.encoding, request.beforeContext, request.afterContext);
-      trimMatchToTextBudget(record, request.effectiveLimits.maxTextCharsReturned - textCharsReturned);
-      const recordChars = matchRecordTextChars(record);
-      if (recordChars > request.effectiveLimits.maxTextCharsReturned - textCharsReturned) {
-        state.reasons.add("text_char_limit");
-        scanComplete = false;
-        matchesExact = false;
-        stopTraversal = true;
-        break;
-      }
-      textCharsReturned += recordChars;
-      projectionRecords.push(record);
-    }
-    if (fileMatches > 0) {
-      filesMatchedObserved += 1;
-      matchedForFacets.push({ file, matches: fileMatches });
-      if (request.projection === "files") {
-        if (projectionRecords.filter((record) => record.type === "file").length >= request.effectiveLimits.maxFilesReturned) {
-          state.reasons.add("file_result_limit");
-          scanComplete = false;
-          stopTraversal = true;
-        } else {
-          projectionRecords.push({
-            type: "file",
-            path: file.path,
-            rawBytes: file.rawBytes,
-            firstMatchLine
-          });
-        }
-      }
-    }
-    if (stopTraversal) {
-      break;
-    }
-  }
-  if (request.projection === "summary") {
-    projectionRecords.push(...buildFacetRecords(request.facets, matchedForFacets, request.effectiveLimits.maxFacetValues, scanComplete && filesSkipped === 0, true));
-  }
-  const fileTotalsExact = scanComplete && filesSkipped === 0;
-  const matchTotalsExact = fileTotalsExact && matchesExact && request.projection !== "files";
-  const filesReturned = projectionRecords.filter((record) => record.type === "file").length;
-  const matchesReturned = projectionRecords.filter((record) => record.type === "match").length;
-  state.records = [
-    {
-      type: "searchSummary",
-      mode: "content",
-      scanComplete,
-      matchUnit: "logicalLine",
-      filesVisited: state.filesVisited,
-      filesDecoded,
-      filesSkipped,
-      filesMatched: fileTotalsExact ? filesMatchedObserved : null,
-      filesMatchedAtLeast: fileTotalsExact ? null : filesMatchedObserved,
-      matchesFound: matchTotalsExact ? matchesObserved : null,
-      matchesFoundAtLeast: matchTotalsExact ? null : matchesObserved,
-      filesReturned,
-      matchesReturned
-    },
-    ...projectionRecords
-  ];
-}
-function buildLineMatcher(request) {
-  if (request.syntax === "regex") {
-    const regex = compileSafeRegex(request.pattern, {
-      caseSensitive: request.caseSensitive
-    });
-    return (line) => regex.matchesLine(line);
-  }
-  if (request.caseSensitive) {
-    return (line) => line.includes(request.pattern);
-  }
-  const foldedPattern = simpleCaseFold(request.pattern);
-  return (line) => simpleCaseFold(line).includes(foldedPattern);
-}
-function buildMatchRecord(path, line, lines, encoding, before, after) {
-  return {
-    type: "match",
-    path,
-    line: line.number,
-    text: line.text,
-    beforeContext: lines.slice(Math.max(0, line.number - 1 - before), line.number - 1).map((context) => ({ line: context.number, text: context.text })),
-    afterContext: lines.slice(line.number, line.number + after).map((context) => ({ line: context.number, text: context.text })),
-    encoding
-  };
-}
-function trimMatchToTextBudget(record, remaining) {
-  while (matchRecordTextChars(record) > remaining && record.afterContext.length > 0) {
-    record.afterContext = record.afterContext.slice(0, -1);
-  }
-  while (matchRecordTextChars(record) > remaining && record.beforeContext.length > 0) {
-    record.beforeContext = record.beforeContext.slice(1);
-  }
-}
-function matchRecordTextChars(record) {
-  return Array.from(record.text).length + record.beforeContext.reduce((total, context) => total + Array.from(context.text).length, 0) + record.afterContext.reduce((total, context) => total + Array.from(context.text).length, 0);
-}
-function buildFacetRecords(facets, matched, maximumValues, exact, content) {
-  const records = [];
-  for (const facet of facets) {
-    const counts = /* @__PURE__ */ new Map();
-    for (const entry of matched) {
-      const value = facetValue(facet, entry.file.path);
-      const current = counts.get(value) ?? { files: 0, matches: 0 };
-      current.files += 1;
-      current.matches += entry.matches;
-      counts.set(value, current);
-    }
-    const ordered = [...counts.entries()].sort((left, right) => {
-      const countDifference = content ? right[1].matches - left[1].matches : right[1].files - left[1].files;
-      return countDifference !== 0 ? countDifference : compareUnicodeScalars3(left[0], right[0]);
-    });
-    const returned = ordered.slice(0, maximumValues);
-    for (const [value, count] of returned) {
-      records.push({
-        type: "facet",
-        facet,
-        value,
-        files: count.files,
-        ...content ? { matches: count.matches } : {},
-        exact
-      });
-    }
-    const omitted = ordered.slice(maximumValues);
-    if (omitted.length > 0) {
-      records.push({
-        type: "facetRemainder",
-        facet,
-        valuesOmitted: omitted.length,
-        files: omitted.reduce((sum, entry) => sum + entry[1].files, 0),
-        ...content ? {
-          matches: omitted.reduce((sum, entry) => sum + entry[1].matches, 0)
-        } : {},
-        exact
-      });
-    }
-  }
-  return records;
-}
-function facetValue(facet, path) {
-  if (facet === "topLevelPath") {
-    const slash2 = path.indexOf("/");
-    return slash2 === -1 ? "" : path.slice(0, slash2);
-  }
-  const slash = path.lastIndexOf("/");
-  const basename3 = slash === -1 ? path : path.slice(slash + 1);
-  const dot = basename3.lastIndexOf(".");
-  return dot <= 0 ? "" : basename3.slice(dot);
-}
-function enforceSearchResultByteBudget(state) {
-  const limit = state.request.effectiveLimits.maxResultBytes;
-  while (serializeCanonicalEnvelope(buildSearchEnvelope(state)).byteLength > limit) {
-    state.reasons.add("result_byte_limit");
-    if (state.records.length > 1) {
-      state.records.pop();
-      refreshReturnedCounts(state.records[0], state.records);
-      continue;
-    }
-    if (state.diagnostics.length > 0) {
-      state.diagnostics.pop();
-      state.diagnosticsOmitted += 1;
-      continue;
-    }
-    throw new Error("Minimal SEARCH envelope exceeds maxResultBytes");
-  }
-}
-function refreshReturnedCounts(summary, records) {
-  summary.filesReturned = records.filter((record) => record.type === "file").length;
-  if (summary.mode === "content") {
-    summary.matchesReturned = records.filter((record) => record.type === "match").length;
-  }
-}
-function buildSearchEnvelope(state) {
-  const status = state.reasons.size === 0 ? "success" : state.records.length > 0 ? "partial" : "failed";
-  return createEnvelope({
-    operation: "search",
-    status,
-    completenessReasons: [...state.reasons],
-    results: state.records,
-    diagnostics: state.diagnostics,
-    diagnosticsOmitted: state.diagnosticsOmitted,
-    effectiveLimits: state.request.effectiveLimits,
-    usage: {
-      filesVisited: state.filesVisited,
-      bytesRead: state.bytesRead
-    }
-  });
-}
-function addDiagnostic2(state, diagnostic) {
-  if (state.diagnostics.length < state.request.effectiveLimits.maxDiagnostics) {
-    state.diagnostics.push(diagnostic);
-  } else {
-    state.diagnosticsOmitted += 1;
-    state.reasons.add("diagnostic_limit");
-  }
-}
-function searchDiagnostic(path, error) {
-  if (error instanceof TextFileError) {
-    return {
-      severity: "warning",
-      code: error.code,
-      message: error.message,
-      path
-    };
-  }
-  return {
-    severity: "warning",
-    code: "source_error",
-    message: error instanceof Error ? error.message : String(error),
-    path
-  };
-}
-function compareUnicodeScalars3(left, right) {
-  const leftScalars = Array.from(left);
-  const rightScalars = Array.from(right);
-  const length = Math.min(leftScalars.length, rightScalars.length);
-  for (let index = 0; index < length; index += 1) {
-    const difference = (leftScalars[index]?.codePointAt(0) ?? 0) - (rightScalars[index]?.codePointAt(0) ?? 0);
-    if (difference !== 0) {
-      return difference;
-    }
-  }
-  return leftScalars.length - rightScalars.length;
-}
-
-// dist/src/fs/workspace.js
-import { lstat as lstat2, readdir, readFile as readFile4, realpath } from "node:fs/promises";
-import { isAbsolute, join as join2, relative, resolve, sep } from "node:path";
-
 // dist/src/fs/glob.js
 function compileRequestGlob(pattern) {
   const anchored = pattern.startsWith("/");
@@ -9307,7 +7696,7 @@ function compileRequestGlob(pattern) {
   };
 }
 function requestGlobMatches(glob, path) {
-  return glob.matcher.matchesLine(glob.basenameOnly ? basename2(path) : path);
+  return glob.matcher.matchesLine(glob.basenameOnly ? basename(path) : path);
 }
 function parseGitIgnore(text, basePath, source) {
   const rules = [];
@@ -9360,7 +7749,7 @@ function gitIgnoreStatus(path, directory, rules) {
     if (relative2 === void 0 || relative2.length === 0) {
       continue;
     }
-    const candidate = rule.basenameOnly ? basename2(relative2) : relative2;
+    const candidate = rule.basenameOnly ? basename(relative2) : relative2;
     if (rule.matcher.matchesLine(candidate)) {
       ignored = !rule.negated;
     }
@@ -9383,18 +7772,25 @@ function globToRegexSource(glob) {
       continue;
     }
     if (scalar === "*") {
-      if (scalars[index + 1] === "*") {
-        while (scalars[index + 1] === "*") {
-          index += 1;
-        }
-        if (scalars[index + 1] === "/") {
+      let runEnd = index;
+      while (scalars[runEnd + 1] === "*") {
+        runEnd += 1;
+      }
+      const runLength = runEnd - index + 1;
+      const previous = scalars[index - 1];
+      const next = scalars[runEnd + 1];
+      const gitStyleDoubleStar = runLength === 2 && (index === 0 || previous === "/") && (next === void 0 || next === "/");
+      if (gitStyleDoubleStar) {
+        if (next === "/") {
           output += "(?:.*/)?";
-          index += 1;
+          index = runEnd + 1;
         } else {
           output += ".*";
+          index = runEnd;
         }
       } else {
         output += "[^/]*";
+        index = runEnd;
       }
       continue;
     }
@@ -9490,12 +7886,409 @@ function stripUnescapedTrailingSpaces(value) {
   }
   return value.slice(0, end);
 }
-function basename2(path) {
+function basename(path) {
   const slash = path.lastIndexOf("/");
   return slash === -1 ? path : path.slice(slash + 1);
 }
 
+// dist/src/contracts/requests.js
+var SEARCH_COMMON_FIELDS = /* @__PURE__ */ new Set([
+  "mode",
+  "projection",
+  "include",
+  "exclude",
+  "facets",
+  "limits"
+]);
+var CONTENT_SEARCH_FIELDS = /* @__PURE__ */ new Set([
+  ...SEARCH_COMMON_FIELDS,
+  "pattern",
+  "syntax",
+  "caseSensitive",
+  "beforeContext",
+  "afterContext"
+]);
+var PATH_PROJECTIONS = /* @__PURE__ */ new Set([
+  "files",
+  "summary",
+  "count"
+]);
+var CONTENT_PROJECTIONS = /* @__PURE__ */ new Set([
+  "matches",
+  "files",
+  "summary",
+  "count"
+]);
+var FACETS = /* @__PURE__ */ new Set(["extension", "topLevelPath"]);
+var ENCODINGS = /* @__PURE__ */ new Set([
+  "utf-8",
+  "utf-16le",
+  "utf-16be",
+  "windows-31j"
+]);
+var SEARCH_LIMITS_EVERYWHERE = /* @__PURE__ */ new Set([
+  "maxResultBytes",
+  "maxDiagnostics",
+  "maxFilesVisited"
+]);
+var READ_LIMITS = /* @__PURE__ */ new Set([
+  "maxResultBytes",
+  "maxTextCharsReturned",
+  "maxDiagnostics",
+  "maxItems",
+  "maxLinesPerItem"
+]);
+function validateSearchRequest(value) {
+  const object = requireObject(value);
+  const mode = requiredEnum(object["mode"], "mode", /* @__PURE__ */ new Set(["paths", "content"]));
+  rejectUnknownFields(object, mode === "content" ? CONTENT_SEARCH_FIELDS : SEARCH_COMMON_FIELDS);
+  const include = optionalStringArray(object["include"], "include");
+  const exclude = optionalStringArray(object["exclude"], "exclude");
+  const suppliedLimits = optionalLimitsObject(object["limits"]);
+  const effectiveLimits = validateLimits(object["limits"]);
+  if (mode === "paths") {
+    const projection2 = optionalEnum(object["projection"], "projection", PATH_PROJECTIONS, "files", "projection_not_supported");
+    const facets2 = validateFacets(object["facets"], projection2);
+    validateApplicableLimits(suppliedLimits, applicableSearchLimits("paths", projection2));
+    return {
+      mode,
+      projection: projection2,
+      include,
+      exclude,
+      facets: facets2,
+      effectiveLimits
+    };
+  }
+  const projection = optionalEnum(object["projection"], "projection", CONTENT_PROJECTIONS, "matches", "projection_not_supported");
+  const pattern = requiredString(object["pattern"], "pattern");
+  validateContentPattern(pattern);
+  const syntax = optionalEnum(object["syntax"], "syntax", /* @__PURE__ */ new Set(["literal", "regex"]), "literal");
+  const beforeContext = optionalNonNegativeInteger(object["beforeContext"], "beforeContext", 0);
+  const afterContext = optionalNonNegativeInteger(object["afterContext"], "afterContext", 0);
+  if (projection !== "matches" && (object["beforeContext"] !== void 0 || object["afterContext"] !== void 0)) {
+    throw validationError("field_not_applicable", "beforeContext and afterContext apply only to matches projection", { projection });
+  }
+  const facets = validateFacets(object["facets"], projection);
+  validateApplicableLimits(suppliedLimits, applicableSearchLimits("content", projection));
+  return {
+    mode,
+    projection,
+    pattern,
+    syntax,
+    caseSensitive: optionalBoolean(object["caseSensitive"], "caseSensitive", true),
+    beforeContext,
+    afterContext,
+    include,
+    exclude,
+    facets,
+    effectiveLimits
+  };
+}
+function validateReadRequest(value) {
+  const object = requireObject(value);
+  rejectUnknownFields(object, /* @__PURE__ */ new Set(["items", "limits"]));
+  if (!Array.isArray(object["items"]) || object["items"].length === 0) {
+    throw validationError("invalid_items", "items must be a non-empty array", { field: "items" });
+  }
+  const suppliedLimits = optionalLimitsObject(object["limits"]);
+  const effectiveLimits = validateLimits(object["limits"]);
+  validateApplicableLimits(suppliedLimits, READ_LIMITS);
+  return {
+    items: object["items"].map((item, index) => validateReadItem(item, index)),
+    effectiveLimits
+  };
+}
+function validateCreateRequest(value) {
+  const object = requireObject(value);
+  rejectUnknownFields(object, /* @__PURE__ */ new Set(["path", "content", "writeAs"]));
+  const writeAs = validateCreateWriteAs(object["writeAs"]);
+  return {
+    path: validateWorkspacePath(object["path"], "path", true),
+    content: requiredString(object["content"], "content"),
+    writeAs
+  };
+}
+function validateUpdateRequest(value) {
+  const object = requireObject(value);
+  rejectUnknownFields(object, /* @__PURE__ */ new Set(["path", "expectedRevision", "change", "writeAs"]));
+  return {
+    path: validateWorkspacePath(object["path"], "path", true),
+    expectedRevision: validateRevision(object["expectedRevision"]),
+    change: validateUpdateChange(object["change"]),
+    writeAs: validateUpdateWriteAs(object["writeAs"])
+  };
+}
+function validateDeleteRequest(value) {
+  const object = requireObject(value);
+  rejectUnknownFields(object, /* @__PURE__ */ new Set(["path", "expectedRevision"]));
+  return {
+    path: validateWorkspacePath(object["path"], "path", true),
+    expectedRevision: validateRevision(object["expectedRevision"])
+  };
+}
+function validateWorkspacePath(value, field, mutation) {
+  const path = requiredString(value, field);
+  if (path.includes("\0") || path.includes("\\") || path.startsWith("/") || path.startsWith("//") || /^[A-Za-z]:/u.test(path)) {
+    throw validationError("path_escape", `${field} must be a root-relative JSON path using /`, { field, path });
+  }
+  const segments = path.split("/");
+  if (segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")) {
+    throw validationError("path_escape", `${field} contains an invalid path segment`, { field, path });
+  }
+  if (mutation && segments[0] === ".git") {
+    throw validationError("protected_path", "Mutation under .git is prohibited", { field, path });
+  }
+  return path;
+}
+function validateReadItem(value, index) {
+  const field = `items[${index}]`;
+  const object = requireObject(value, field);
+  rejectUnknownFields(object, /* @__PURE__ */ new Set([
+    "path",
+    "encoding",
+    "full",
+    "range",
+    "firstLines",
+    "lastLines"
+  ]), field);
+  const selectors = ["full", "range", "firstLines", "lastLines"].filter((selector2) => object[selector2] !== void 0);
+  if (selectors.length !== 1) {
+    throw validationError("invalid_selector", `${field} must contain exactly one read selector`, { field, selectors });
+  }
+  let selector;
+  if (object["full"] !== void 0) {
+    if (object["full"] !== true) {
+      throw validationError("invalid_selector", `${field}.full must be true`, { field: `${field}.full` });
+    }
+    selector = { full: true };
+  } else if (object["range"] !== void 0) {
+    const range = requireObject(object["range"], `${field}.range`);
+    rejectUnknownFields(range, /* @__PURE__ */ new Set(["startLine", "endLine"]), `${field}.range`);
+    const startLine = positiveInteger(range["startLine"], `${field}.range.startLine`);
+    const endLine = positiveInteger(range["endLine"], `${field}.range.endLine`);
+    if (startLine > endLine) {
+      throw validationError("invalid_range", `${field}.range.startLine must not exceed endLine`, { field: `${field}.range`, startLine, endLine });
+    }
+    selector = { range: { startLine, endLine } };
+  } else if (object["firstLines"] !== void 0) {
+    selector = {
+      firstLines: positiveInteger(object["firstLines"], `${field}.firstLines`)
+    };
+  } else {
+    selector = {
+      lastLines: positiveInteger(object["lastLines"], `${field}.lastLines`)
+    };
+  }
+  return {
+    path: validateWorkspacePath(object["path"], `${field}.path`, false),
+    encoding: object["encoding"] === void 0 ? void 0 : requiredEnum(object["encoding"], `${field}.encoding`, ENCODINGS),
+    selector
+  };
+}
+function validateCreateWriteAs(value) {
+  if (value === void 0) {
+    return { encoding: "utf-8", lineEnding: "lf", bom: false };
+  }
+  const object = requireObject(value, "writeAs");
+  rejectUnknownFields(object, /* @__PURE__ */ new Set(["encoding", "lineEnding", "bom"]), "writeAs");
+  return {
+    encoding: optionalEnum(object["encoding"], "writeAs.encoding", ENCODINGS, "utf-8"),
+    lineEnding: optionalEnum(object["lineEnding"], "writeAs.lineEnding", /* @__PURE__ */ new Set(["lf", "crlf", "cr"]), "lf"),
+    bom: optionalBoolean(object["bom"], "writeAs.bom", false)
+  };
+}
+function validateUpdateWriteAs(value) {
+  if (value === void 0) {
+    return {
+      encoding: "preserve",
+      lineEnding: "preserve",
+      bom: "preserve"
+    };
+  }
+  const object = requireObject(value, "writeAs");
+  rejectUnknownFields(object, /* @__PURE__ */ new Set(["encoding", "lineEnding", "bom"]), "writeAs");
+  return {
+    encoding: optionalEnum(object["encoding"], "writeAs.encoding", /* @__PURE__ */ new Set(["preserve", ...ENCODINGS]), "preserve"),
+    lineEnding: optionalEnum(object["lineEnding"], "writeAs.lineEnding", /* @__PURE__ */ new Set(["preserve", "lf", "crlf", "cr"]), "preserve"),
+    bom: object["bom"] === void 0 ? "preserve" : object["bom"] === "preserve" || typeof object["bom"] === "boolean" ? object["bom"] : invalidField("writeAs.bom", 'must be boolean or "preserve"', object["bom"])
+  };
+}
+function validateUpdateChange(value) {
+  const object = requireObject(value, "change");
+  const type = requiredEnum(object["type"], "change.type", /* @__PURE__ */ new Set(["context-diff", "replace", "transcode"]));
+  if (type === "context-diff") {
+    rejectUnknownFields(object, /* @__PURE__ */ new Set(["type", "diff"]), "change");
+    return {
+      type,
+      diff: requiredString(object["diff"], "change.diff")
+    };
+  }
+  if (type === "replace") {
+    rejectUnknownFields(object, /* @__PURE__ */ new Set(["type", "content"]), "change");
+    return {
+      type,
+      content: requiredString(object["content"], "change.content")
+    };
+  }
+  rejectUnknownFields(object, /* @__PURE__ */ new Set(["type"]), "change");
+  return { type };
+}
+function validateFacets(value, projection) {
+  if (value === void 0) {
+    return projection === "summary" ? ["extension", "topLevelPath"] : [];
+  }
+  if (projection !== "summary") {
+    throw validationError("field_not_applicable", "facets apply only to summary projection", { projection });
+  }
+  if (!Array.isArray(value) || value.length === 0) {
+    throw validationError("invalid_facets", "facets must be a non-empty array", { field: "facets" });
+  }
+  const facets = value.map((facet, index) => requiredEnum(facet, `facets[${index}]`, FACETS));
+  if (new Set(facets).size !== facets.length) {
+    throw validationError("invalid_facets", "facets must not contain duplicates", { field: "facets" });
+  }
+  return facets;
+}
+function applicableSearchLimits(mode, projection) {
+  const names = new Set(SEARCH_LIMITS_EVERYWHERE);
+  if (mode === "content") {
+    names.add("maxSourceBytes");
+  }
+  if (projection === "matches") {
+    names.add("maxTextCharsReturned");
+    names.add("maxMatches");
+    names.add("maxMatchesPerFile");
+  } else if (projection === "files") {
+    names.add("maxFilesReturned");
+  } else if (projection === "summary") {
+    names.add("maxFacetValues");
+  }
+  return names;
+}
+function optionalLimitsObject(value) {
+  return value === void 0 ? {} : requireObject(value, "limits");
+}
+function validateApplicableLimits(supplied, applicable) {
+  const invalid = Object.keys(supplied).filter((name) => !applicable.has(name));
+  if (invalid.length > 0) {
+    throw validationError("field_not_applicable", `Limit ${invalid[0]} does not apply to the selected operation`, { field: `limits.${invalid[0]}` });
+  }
+}
+function validateContentPattern(pattern) {
+  const length = Array.from(pattern).length;
+  if (length === 0) {
+    throw validationError("pattern_empty", "pattern must not be empty", {
+      field: "pattern"
+    });
+  }
+  if (length > 4096) {
+    throw validationError("pattern_too_large", "pattern must not exceed 4096 Unicode scalars", { field: "pattern", length });
+  }
+  if (pattern.includes("\r") || pattern.includes("\n")) {
+    throw validationError("regex_syntax_error", "pattern must not contain CR or LF", { field: "pattern" });
+  }
+}
+function validateRevision(value) {
+  const revision = requiredString(value, "expectedRevision");
+  if (!/^sha256:[0-9a-f]{64}$/u.test(revision)) {
+    throw validationError("invalid_revision", "expectedRevision must be sha256 followed by 64 lowercase hex digits", { field: "expectedRevision" });
+  }
+  return revision;
+}
+function optionalStringArray(value, field) {
+  if (value === void 0) {
+    return [];
+  }
+  if (!Array.isArray(value) || value.length === 0) {
+    throw validationError("invalid_type", `${field} must be a non-empty string array`, { field });
+  }
+  return value.map((item, index) => {
+    const text = requiredString(item, `${field}[${index}]`);
+    const itemField = `${field}[${index}]`;
+    if (text.includes("\0") || text.includes("\\")) {
+      throw validationError("invalid_glob", `${itemField} must use / and contain no NUL`, { field: itemField });
+    }
+    try {
+      compileRequestGlob(text);
+    } catch (error) {
+      throw validationError("invalid_glob", `${itemField} is not a valid glob`, {
+        field: itemField,
+        reason: error instanceof Error ? error.message : String(error)
+      });
+    }
+    return text;
+  });
+}
+function requiredString(value, field) {
+  if (typeof value !== "string") {
+    return invalidField(field, "must be a string", value);
+  }
+  const invalid = firstUnpairedSurrogate(value);
+  if (invalid !== void 0) {
+    throw validationError("invalid_unicode_scalar", `${field} must contain only Unicode scalar values`, {
+      field,
+      characterOffset: invalid.characterOffset,
+      codeUnitOffset: invalid.codeUnitOffset
+    });
+  }
+  return value;
+}
+function optionalBoolean(value, field, fallback) {
+  if (value === void 0) {
+    return fallback;
+  }
+  if (typeof value !== "boolean") {
+    return invalidField(field, "must be boolean", value);
+  }
+  return value;
+}
+function positiveInteger(value, field) {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    return invalidField(field, "must be a positive safe integer", value);
+  }
+  return value;
+}
+function optionalNonNegativeInteger(value, field, fallback) {
+  if (value === void 0) {
+    return fallback;
+  }
+  if (!Number.isSafeInteger(value) || value < 0) {
+    return invalidField(field, "must be a non-negative safe integer", value);
+  }
+  return value;
+}
+function requiredEnum(value, field, values, code = "invalid_value") {
+  if (typeof value !== "string" || !values.has(value)) {
+    throw validationError(code, `${field} has an unsupported value`, {
+      field,
+      value,
+      allowed: [...values]
+    });
+  }
+  return value;
+}
+function optionalEnum(value, field, values, fallback, code = "invalid_value") {
+  return value === void 0 ? fallback : requiredEnum(value, field, values, code);
+}
+function invalidField(field, expectation, value) {
+  throw validationError("invalid_type", `${field} ${expectation}`, {
+    field,
+    value
+  });
+}
+function validationError(code, message, details) {
+  const diagnostic = {
+    severity: "error",
+    code,
+    message,
+    details
+  };
+  return new RequestValidationError([diagnostic]);
+}
+
 // dist/src/fs/workspace.js
+import { lstat, readdir, readFile, realpath } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 var WorkspaceBoundaryError = class extends Error {
   code;
   path;
@@ -9516,7 +8309,7 @@ var Workspace = class _Workspace {
       throw new WorkspaceBoundaryError("path_escape", "Workspace root must be absolute");
     }
     const resolved = await realpath(root);
-    const status = await lstat2(resolved);
+    const status = await lstat(resolved);
     if (!status.isDirectory()) {
       throw new WorkspaceBoundaryError("source_error", "Workspace root must be a directory");
     }
@@ -9525,7 +8318,7 @@ var Workspace = class _Workspace {
   async resolveExistingFile(path) {
     validateWorkspacePath(path, "path", false);
     const absolutePath = await this.#walkExisting(path);
-    const status = await lstat2(absolutePath);
+    const status = await lstat(absolutePath);
     if (!status.isFile()) {
       throw new WorkspaceBoundaryError("source_error", "Target is not a regular file", path);
     }
@@ -9537,10 +8330,10 @@ var Workspace = class _Workspace {
     const targetName = segments.pop();
     let current = this.root;
     for (const segment of segments) {
-      current = join2(current, segment);
+      current = join(current, segment);
       let status;
       try {
-        status = await lstat2(current);
+        status = await lstat(current);
       } catch (error) {
         if (isMissing(error)) {
           throw new WorkspaceBoundaryError("parent_missing", "Create parent directory does not exist", path);
@@ -9554,10 +8347,10 @@ var Workspace = class _Workspace {
         throw new WorkspaceBoundaryError("parent_missing", "Create parent is not a directory", path);
       }
     }
-    const target = join2(current, targetName);
+    const target = join(current, targetName);
     this.#assertContained(target, path);
     try {
-      await lstat2(target);
+      await lstat(target);
       throw new WorkspaceBoundaryError("target_exists", "Create target already exists", path);
     } catch (error) {
       if (error instanceof WorkspaceBoundaryError) {
@@ -9572,18 +8365,26 @@ var Workspace = class _Workspace {
   async scan(options = {}) {
     const includes = (options.include ?? []).map(compileRequestGlob);
     const excludes = (options.exclude ?? []).map(compileRequestGlob);
-    const files = [];
-    const diagnostics = [];
-    await this.#scanDirectory("", [], includes, excludes, files, diagnostics);
-    return { files, diagnostics };
+    const state = {
+      files: [],
+      diagnostics: [],
+      maximumFiles: options.maxFiles ?? Number.MAX_SAFE_INTEGER,
+      truncated: false
+    };
+    await this.#scanDirectory("", [], includes, excludes, state);
+    return {
+      files: state.files,
+      diagnostics: state.diagnostics,
+      truncated: state.truncated
+    };
   }
   async #walkExisting(path) {
     let current = this.root;
     for (const segment of path.split("/")) {
-      current = join2(current, segment);
+      current = join(current, segment);
       let status;
       try {
-        status = await lstat2(current);
+        status = await lstat(current);
       } catch (error) {
         if (isMissing(error)) {
           throw new WorkspaceBoundaryError("target_missing", "Target does not exist", path);
@@ -9597,29 +8398,33 @@ var Workspace = class _Workspace {
     this.#assertContained(current, path);
     return current;
   }
-  async #scanDirectory(directoryPath, inheritedRules, includes, excludes, files, diagnostics) {
-    const absoluteDirectory = directoryPath.length === 0 ? this.root : join2(this.root, ...directoryPath.split("/"));
+  async #scanDirectory(directoryPath, inheritedRules, includes, excludes, state) {
+    const absoluteDirectory = directoryPath.length === 0 ? this.root : join(this.root, ...directoryPath.split("/"));
     let entries;
     try {
       entries = await readdir(absoluteDirectory, { withFileTypes: true });
     } catch (error) {
-      diagnostics.push(sourceDiagnostic(directoryPath, error));
+      state.diagnostics.push(sourceDiagnostic(directoryPath, error));
       return;
     }
-    entries.sort((left, right) => compareUnicodeScalars4(left.name, right.name));
-    const localRules = await this.#loadGitIgnore(directoryPath, absoluteDirectory, entries.some((entry) => entry.name === ".gitignore"), diagnostics);
+    entries.sort((left, right) => compareUnicodeScalars2(left.name, right.name));
+    const localRules = await this.#loadGitIgnore(directoryPath, absoluteDirectory, entries.some((entry) => entry.name === ".gitignore"), state.diagnostics);
     const rules = [...inheritedRules, ...localRules];
     for (const entry of entries) {
+      if (state.files.length >= state.maximumFiles) {
+        state.truncated = true;
+        break;
+      }
       if (directoryPath.length === 0 && entry.name === ".git") {
         continue;
       }
       const path = directoryPath.length === 0 ? entry.name : `${directoryPath}/${entry.name}`;
-      const absolutePath = join2(absoluteDirectory, entry.name);
+      const absolutePath = join(absoluteDirectory, entry.name);
       let status;
       try {
-        status = await lstat2(absolutePath);
+        status = await lstat(absolutePath);
       } catch (error) {
-        diagnostics.push(sourceDiagnostic(path, error));
+        state.diagnostics.push(sourceDiagnostic(path, error));
         continue;
       }
       if (status.isSymbolicLink()) {
@@ -9627,7 +8432,9 @@ var Workspace = class _Workspace {
       }
       if (status.isDirectory()) {
         if (!gitIgnoreStatus(path, true, rules)) {
-          await this.#scanDirectory(path, rules, includes, excludes, files, diagnostics);
+          await this.#scanDirectory(path, rules, includes, excludes, state);
+          if (state.truncated)
+            break;
         }
         continue;
       }
@@ -9640,7 +8447,7 @@ var Workspace = class _Workspace {
       if (excludes.some((glob) => requestGlobMatches(glob, path))) {
         continue;
       }
-      files.push({
+      state.files.push({
         path,
         absolutePath,
         rawBytes: status.size
@@ -9652,13 +8459,13 @@ var Workspace = class _Workspace {
       return [];
     }
     const path = directoryPath.length === 0 ? ".gitignore" : `${directoryPath}/.gitignore`;
-    const absolutePath = join2(absoluteDirectory, ".gitignore");
+    const absolutePath = join(absoluteDirectory, ".gitignore");
     try {
-      const status = await lstat2(absolutePath);
+      const status = await lstat(absolutePath);
       if (!status.isFile() || status.isSymbolicLink()) {
         return [];
       }
-      const bytes = await readFile4(absolutePath);
+      const bytes = await readFile(absolutePath);
       return parseGitIgnore(decodeStrict(bytes, "utf-8"), directoryPath, path);
     } catch (error) {
       diagnostics.push(sourceDiagnostic(path, error));
@@ -9683,6 +8490,1660 @@ function sourceDiagnostic(path, error) {
 function isMissing(error) {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
+function compareUnicodeScalars2(left, right) {
+  const leftScalars = Array.from(left);
+  const rightScalars = Array.from(right);
+  const length = Math.min(leftScalars.length, rightScalars.length);
+  for (let index = 0; index < length; index += 1) {
+    const difference = (leftScalars[index]?.codePointAt(0) ?? 0) - (rightScalars[index]?.codePointAt(0) ?? 0);
+    if (difference !== 0) {
+      return difference;
+    }
+  }
+  return leftScalars.length - rightScalars.length;
+}
+
+// dist/src/config/repository-policy.js
+var REPOSITORY_CONFIG_PATH = ".mikusoft/miku-text-file-ops.json";
+var RepositoryConfigError = class extends Error {
+  code = "repository_config_invalid";
+  path = REPOSITORY_CONFIG_PATH;
+  constructor(message) {
+    super(message);
+    this.name = "RepositoryConfigError";
+  }
+};
+async function loadRepositoryTextPolicy(workspace) {
+  let absolutePath;
+  try {
+    absolutePath = await workspace.resolveExistingFile(REPOSITORY_CONFIG_PATH);
+  } catch (error) {
+    if (error instanceof WorkspaceBoundaryError && error.code === "target_missing") {
+      return buildPolicy([], void 0, void 0);
+    }
+    throw error;
+  }
+  let value;
+  try {
+    const text = decodeStrict(await readFile2(absolutePath), "utf-8");
+    value = JSON.parse(text);
+  } catch (error) {
+    throw configError("must be strict UTF-8 containing valid JSON", error);
+  }
+  return parseRepositoryTextPolicy(value);
+}
+function parseRepositoryTextPolicy(value) {
+  const object = configObject(value, "configuration");
+  rejectConfigFields(object, /* @__PURE__ */ new Set([
+    "schemaVersion",
+    "encodingRules",
+    "defaultCreate",
+    "legacyFallback"
+  ]), "configuration");
+  if (object["schemaVersion"] !== 1) {
+    throw configError("schemaVersion must be 1");
+  }
+  const rulesValue = object["encodingRules"];
+  if (rulesValue !== void 0 && !Array.isArray(rulesValue)) {
+    throw configError("encodingRules must be an array");
+  }
+  const rules = (rulesValue ?? []).map((rule, index) => parseEncodingRule(rule, index));
+  const defaultCreate = object["defaultCreate"] === void 0 ? void 0 : parseCreateDefaults(object["defaultCreate"]);
+  const legacyFallback = object["legacyFallback"] === void 0 ? void 0 : object["legacyFallback"] === "windows-31j" ? "windows-31j" : (() => {
+    throw configError('legacyFallback must be "windows-31j"');
+  })();
+  return buildPolicy(rules, defaultCreate, legacyFallback);
+}
+function parseEncodingRule(value, index) {
+  const field = `encodingRules[${index}]`;
+  const object = configObject(value, field);
+  rejectConfigFields(object, /* @__PURE__ */ new Set(["glob", "encoding"]), field);
+  const glob = configString(object["glob"], `${field}.glob`);
+  const encoding = canonicalEncoding(object["encoding"], `${field}.encoding`);
+  try {
+    return { glob, encoding, compiled: compileRequestGlob(glob) };
+  } catch (error) {
+    throw configError(`${field}.glob is invalid`, error);
+  }
+}
+function parseCreateDefaults(value) {
+  const object = configObject(value, "defaultCreate");
+  rejectConfigFields(object, /* @__PURE__ */ new Set(["encoding", "lineEnding", "bom"]), "defaultCreate");
+  try {
+    return validateCreateRequest({
+      path: "placeholder",
+      content: "",
+      writeAs: object
+    }).writeAs;
+  } catch (error) {
+    throw configError("defaultCreate is invalid", error);
+  }
+}
+function buildPolicy(rules, defaultCreate, legacyFallback) {
+  return {
+    encodingRules: rules.map(({ glob, encoding }) => ({ glob, encoding })),
+    defaultCreate,
+    legacyFallback,
+    repositoryEncoding: (path) => rules.find((rule) => requestGlobMatches(rule.compiled, path))?.encoding
+  };
+}
+function configObject(value, field) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw configError(`${field} must be an object`);
+  }
+  return value;
+}
+function configString(value, field) {
+  if (typeof value !== "string") {
+    throw configError(`${field} must be a string`);
+  }
+  return value;
+}
+function canonicalEncoding(value, field) {
+  if (value !== "utf-8" && value !== "utf-16le" && value !== "utf-16be" && value !== "windows-31j") {
+    throw configError(`${field} has an unsupported value`);
+  }
+  return value;
+}
+function rejectConfigFields(object, allowed, field) {
+  const unknown = Object.keys(object).filter((key) => !allowed.has(key));
+  if (unknown.length > 0) {
+    throw configError(`${field} contains unknown field ${unknown[0]}`);
+  }
+}
+function configError(message, cause) {
+  const suffix = cause instanceof Error && cause.message.length > 0 ? `: ${cause.message}` : "";
+  return new RepositoryConfigError(`${message}${suffix}`);
+}
+
+// dist/src/core/mutate.js
+import { randomUUID } from "node:crypto";
+import { chmod, lstat as lstat2, open, readFile as readFile3, rename, unlink } from "node:fs/promises";
+import { basename as basename2, dirname, join as join2 } from "node:path";
+
+// dist/src/text/logical-lines.js
+function parseLogicalText(text) {
+  const lines = [];
+  const newlineKinds = /* @__PURE__ */ new Set();
+  let lineStart = 0;
+  let lineNumber = 1;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (character !== "\r" && character !== "\n") {
+      continue;
+    }
+    let newline;
+    if (character === "\r" && text[index + 1] === "\n") {
+      newline = "\r\n";
+      index += 1;
+    } else {
+      newline = character;
+    }
+    const newlineStart = newline === "\r\n" ? index - 1 : index;
+    lines.push({
+      number: lineNumber,
+      text: text.slice(lineStart, newlineStart),
+      newline
+    });
+    newlineKinds.add(newline);
+    lineNumber += 1;
+    lineStart = index + 1;
+  }
+  if (lineStart < text.length) {
+    lines.push({
+      number: lineNumber,
+      text: text.slice(lineStart),
+      newline: null
+    });
+  }
+  return {
+    lines,
+    lineEnding: classifyLineEnding(newlineKinds),
+    finalNewline: text.length > 0 && lineStart === text.length
+  };
+}
+function classifyLineEnding(newlineKinds) {
+  if (newlineKinds.size === 0) {
+    return "none";
+  }
+  if (newlineKinds.size > 1) {
+    return "mixed";
+  }
+  const only = newlineKinds.values().next().value;
+  switch (only) {
+    case "\n":
+      return "lf";
+    case "\r\n":
+      return "crlf";
+    case "\r":
+      return "cr";
+    default:
+      throw new Error("Unreachable newline classification");
+  }
+}
+
+// dist/src/patch/context-diff.js
+var ContextDiffError = class extends Error {
+  code;
+  hunkIndex;
+  constructor(code, message, hunkIndex) {
+    super(message);
+    this.name = "ContextDiffError";
+    this.code = code;
+    this.hunkIndex = hunkIndex;
+  }
+};
+function parseContextDiff(diff) {
+  if (diff.length === 0) {
+    throw syntaxError("A contextual diff must contain at least one hunk");
+  }
+  if (diff.includes("\r")) {
+    throw syntaxError("A contextual diff must not contain CR");
+  }
+  if (!diff.endsWith("\n")) {
+    throw syntaxError("A contextual diff must end with LF");
+  }
+  const physicalLines = diff.slice(0, -1).split("\n");
+  const hunks = [];
+  let currentLines;
+  for (const physicalLine of physicalLines) {
+    if (physicalLine === "@@") {
+      if (currentLines !== void 0) {
+        hunks.push(buildHunk(currentLines, hunks.length));
+      }
+      currentLines = [];
+      continue;
+    }
+    if (physicalLine.startsWith("@@")) {
+      throw syntaxError("A hunk header must be exactly @@");
+    }
+    if (currentLines === void 0) {
+      throw syntaxError("Patch content must begin with a @@ hunk header");
+    }
+    const indicator = physicalLine[0];
+    const text = physicalLine.slice(1);
+    switch (indicator) {
+      case " ":
+        currentLines.push({ kind: "context", text });
+        break;
+      case "-":
+        currentLines.push({ kind: "remove", text });
+        break;
+      case "+":
+        currentLines.push({ kind: "add", text });
+        break;
+      default:
+        throw syntaxError("Every hunk body line must begin with space, -, or +");
+    }
+  }
+  if (currentLines === void 0) {
+    throw syntaxError("A contextual diff must contain a @@ hunk header");
+  }
+  hunks.push(buildHunk(currentLines, hunks.length));
+  return { hunks };
+}
+function applyContextDiffWithSources(sourceText, diff, lineEnding = "preserve") {
+  const patch = typeof diff === "string" ? parseContextDiff(diff) : diff;
+  const source = parseLogicalText(sourceText);
+  const preferredFileNewline = dominantNewline(source.lines);
+  const located = patch.hunks.map((hunk, hunkIndex) => locateHunk(source.lines, hunk, hunkIndex, preferredFileNewline));
+  validateHunkInteraction(located);
+  const output = [];
+  let sourceIndex = 0;
+  let linesAdded = 0;
+  let linesRemoved = 0;
+  for (const locatedHunk of located) {
+    appendOriginalRange(output, source.lines, sourceIndex, locatedHunk.start);
+    let hunkSourceIndex = locatedHunk.start;
+    for (const patchLine of locatedHunk.hunk.lines) {
+      switch (patchLine.kind) {
+        case "context": {
+          const original = source.lines[hunkSourceIndex];
+          if (original === void 0) {
+            throw new Error("Located hunk exceeded its source range");
+          }
+          output.push({
+            text: original.text,
+            newline: original.newline,
+            hunkIndex: locatedHunk.hunkIndex,
+            sourceLineIndex: hunkSourceIndex
+          });
+          hunkSourceIndex += 1;
+          break;
+        }
+        case "remove":
+          hunkSourceIndex += 1;
+          linesRemoved += 1;
+          break;
+        case "add":
+          output.push({
+            text: patchLine.text,
+            newline: null,
+            hunkIndex: locatedHunk.hunkIndex
+          });
+          linesAdded += 1;
+          break;
+      }
+    }
+    sourceIndex = locatedHunk.end;
+  }
+  appendOriginalRange(output, source.lines, sourceIndex, source.lines.length);
+  if (output.length === 0) {
+    throw new ContextDiffError("patch_requires_replace", "A contextual diff cannot produce an empty file; use replace");
+  }
+  assignOutputNewlines(output, located, lineEnding, source.finalNewline, preferredFileNewline);
+  return {
+    text: serializeOutputLines(output),
+    hunksApplied: located.length,
+    linesAdded,
+    linesRemoved,
+    lineSources: output.map((line) => line.sourceLineIndex ?? null)
+  };
+}
+function buildHunk(lines, hunkIndex) {
+  if (lines.length === 0) {
+    throw syntaxError("A hunk must contain at least one body line", hunkIndex);
+  }
+  if (!lines.some((line) => line.kind === "add" || line.kind === "remove")) {
+    throw syntaxError("A hunk must contain at least one changed line", hunkIndex);
+  }
+  const sourceLines = lines.filter((line) => line.kind !== "add").map((line) => line.text);
+  if (sourceLines.length === 0) {
+    throw new ContextDiffError("patch_requires_replace", "An addition-only hunk requires a context anchor; use replace", hunkIndex);
+  }
+  return {
+    lines: [...lines],
+    sourceLines,
+    replacementLines: lines.filter((line) => line.kind !== "remove").map((line) => line.text)
+  };
+}
+function locateHunk(sourceLines, hunk, hunkIndex, preferredFileNewline) {
+  const starts = [];
+  const finalStart = sourceLines.length - hunk.sourceLines.length;
+  for (let start2 = 0; start2 <= finalStart; start2 += 1) {
+    if (hunk.sourceLines.every((text, offset) => sourceLines[start2 + offset]?.text === text)) {
+      starts.push(start2);
+    }
+  }
+  if (starts.length === 0) {
+    throw new ContextDiffError("patch_context_mismatch", `Hunk ${hunkIndex} did not match the original file`, hunkIndex);
+  }
+  if (starts.length > 1) {
+    throw new ContextDiffError("patch_ambiguous", `Hunk ${hunkIndex} matched more than one location`, hunkIndex);
+  }
+  const start = starts[0];
+  const end = start + hunk.sourceLines.length;
+  return {
+    hunk,
+    hunkIndex,
+    start,
+    end,
+    preferredNewline: selectHunkNewline(sourceLines, hunk, start, end, preferredFileNewline)
+  };
+}
+function validateHunkInteraction(located) {
+  for (let index = 1; index < located.length; index += 1) {
+    const previous = located[index - 1];
+    const current = located[index];
+    if (rangesOverlap(previous.start, previous.end, current.start, current.end)) {
+      throw new ContextDiffError("patch_hunks_overlap", `Hunks ${previous.hunkIndex} and ${current.hunkIndex} overlap`, current.hunkIndex);
+    }
+    if (current.start < previous.start) {
+      throw new ContextDiffError("patch_hunks_out_of_order", `Hunk ${current.hunkIndex} occurs before the previous hunk`, current.hunkIndex);
+    }
+  }
+}
+function rangesOverlap(leftStart, leftEnd, rightStart, rightEnd) {
+  return leftStart < rightEnd && rightStart < leftEnd;
+}
+function selectHunkNewline(sourceLines, hunk, start, end, preferredFileNewline) {
+  let sourceOffset = 0;
+  for (const line of hunk.lines) {
+    if (line.kind === "add") {
+      continue;
+    }
+    const original = sourceLines[start + sourceOffset];
+    if (line.kind === "remove" && original !== void 0 && original.newline !== null) {
+      return original.newline;
+    }
+    sourceOffset += 1;
+  }
+  const preceding = nearestPrecedingNewline(sourceLines, start);
+  if (preceding !== void 0) {
+    return preceding;
+  }
+  const following = nearestFollowingNewline(sourceLines, end);
+  return following ?? preferredFileNewline;
+}
+function nearestPrecedingNewline(lines, start) {
+  for (let index = start - 1; index >= 0; index -= 1) {
+    const newline = lines[index]?.newline;
+    if (newline !== null && newline !== void 0) {
+      return newline;
+    }
+  }
+  return void 0;
+}
+function nearestFollowingNewline(lines, end) {
+  for (let index = end; index < lines.length; index += 1) {
+    const newline = lines[index]?.newline;
+    if (newline !== null && newline !== void 0) {
+      return newline;
+    }
+  }
+  return void 0;
+}
+function dominantNewline(lines) {
+  const counts = /* @__PURE__ */ new Map();
+  for (const [index, line] of lines.entries()) {
+    if (line.newline === null) {
+      continue;
+    }
+    const current = counts.get(line.newline);
+    counts.set(line.newline, {
+      count: (current?.count ?? 0) + 1,
+      first: current?.first ?? index
+    });
+  }
+  const selected = [...counts.entries()].sort((left, right) => {
+    const countDifference = right[1].count - left[1].count;
+    return countDifference !== 0 ? countDifference : left[1].first - right[1].first;
+  })[0];
+  return selected?.[0] ?? "\n";
+}
+function appendOriginalRange(output, source, start, end) {
+  for (let index = start; index < end; index += 1) {
+    const line = source[index];
+    if (line !== void 0) {
+      output.push({
+        text: line.text,
+        newline: line.newline,
+        sourceLineIndex: index
+      });
+    }
+  }
+}
+function assignOutputNewlines(output, located, lineEnding, originalFinalNewline, preferredFileNewline) {
+  const explicit = explicitNewline(lineEnding);
+  const lastIndex = output.length - 1;
+  for (const [index, line] of output.entries()) {
+    const isLast = index === lastIndex;
+    if (explicit !== void 0) {
+      line.newline = isLast && !originalFinalNewline ? null : explicit;
+      continue;
+    }
+    if (isLast && !originalFinalNewline) {
+      line.newline = null;
+      continue;
+    }
+    if (line.newline === null) {
+      line.newline = line.hunkIndex === void 0 ? preferredFileNewline : located[line.hunkIndex]?.preferredNewline ?? preferredFileNewline;
+    }
+  }
+}
+function explicitNewline(lineEnding) {
+  switch (lineEnding) {
+    case "preserve":
+      return void 0;
+    case "lf":
+      return "\n";
+    case "crlf":
+      return "\r\n";
+    case "cr":
+      return "\r";
+  }
+}
+function serializeOutputLines(lines) {
+  return lines.map((line) => `${line.text}${line.newline ?? ""}`).join("");
+}
+function syntaxError(message, hunkIndex) {
+  return new ContextDiffError("patch_syntax_error", message, hunkIndex);
+}
+
+// dist/src/text/text-file.js
+import { createHash } from "node:crypto";
+var TextFileError = class extends Error {
+  code;
+  encoding;
+  byteOffset;
+  constructor(code, message, encoding, byteOffset) {
+    super(message);
+    this.name = "TextFileError";
+    this.code = code;
+    this.encoding = encoding;
+    this.byteOffset = byteOffset;
+  }
+};
+function decodeTextFile(bytes, options = {}) {
+  const bomEncoding = detectBom(bytes);
+  const requestedEncoding = options.explicitEncoding ?? options.repositoryEncoding;
+  if (requestedEncoding !== void 0 && bomEncoding !== void 0 && requestedEncoding !== bomEncoding) {
+    throw new TextFileError("encoding_conflict", `Requested ${requestedEncoding} conflicts with ${bomEncoding} BOM`, requestedEncoding);
+  }
+  let encoding;
+  let encodingSource;
+  if (options.explicitEncoding !== void 0) {
+    encoding = options.explicitEncoding;
+    encodingSource = "explicit";
+  } else if (options.repositoryEncoding !== void 0) {
+    encoding = options.repositoryEncoding;
+    encodingSource = "repositoryRule";
+  } else if (bomEncoding !== void 0) {
+    encoding = bomEncoding;
+    encodingSource = "bom";
+  } else {
+    try {
+      const text = decodeStrict(bytes, "utf-8");
+      return buildDecodedFile(bytes, text, "utf-8", "strictUtf8", false);
+    } catch (error) {
+      if (!(error instanceof TextDecodingError) || options.legacyFallback === void 0) {
+        throw new TextFileError("encoding_undetermined", "Input has no recognized BOM and is not valid UTF-8", "utf-8", error instanceof TextDecodingError ? error.byteOffset : void 0);
+      }
+      encoding = options.legacyFallback;
+      encodingSource = "legacyFallback";
+    }
+  }
+  try {
+    return buildDecodedFile(bytes, decodeStrict(bytes, encoding), encoding, encodingSource, bomEncoding !== void 0);
+  } catch (error) {
+    if (error instanceof TextDecodingError) {
+      throw new TextFileError("decode_error", error.message, encoding, error.byteOffset);
+    }
+    throw error;
+  }
+}
+function rawByteRevision(bytes) {
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+}
+function detectBom(bytes) {
+  if (bytes[0] === 239 && bytes[1] === 187 && bytes[2] === 191) {
+    return "utf-8";
+  }
+  if (bytes[0] === 255 && bytes[1] === 254) {
+    return "utf-16le";
+  }
+  if (bytes[0] === 254 && bytes[1] === 255) {
+    return "utf-16be";
+  }
+  return void 0;
+}
+function buildDecodedFile(bytes, text, encoding, encodingSource, bom) {
+  const logicalText = parseLogicalText(text);
+  return {
+    text,
+    logicalText,
+    revision: rawByteRevision(bytes),
+    encoding,
+    encodingSource,
+    bom,
+    rawBytes: bytes.byteLength,
+    lineEnding: logicalText.lineEnding,
+    finalNewline: logicalText.finalNewline,
+    logicalLines: logicalText.lines.length
+  };
+}
+
+// dist/src/core/mutate.js
+var MutationError = class extends Error {
+  code;
+  constructor(code, message) {
+    super(message);
+    this.name = "MutationError";
+    this.code = code;
+  }
+};
+async function executeCreate(workspace, input) {
+  const request = validateCreateRequest(input);
+  const target = await workspace.resolveCreateTarget(request.path);
+  const formatted = normalizeLineEndings(request.content, request.writeAs.lineEnding);
+  const bytes = encodeWithBom(formatted, request.writeAs.encoding, request.writeAs.bom);
+  let handle;
+  try {
+    handle = await open(target, "wx");
+    await handle.writeFile(bytes);
+    await handle.sync();
+  } catch (error) {
+    if (isNodeCode(error, "EEXIST")) {
+      throw new MutationError("target_exists", "Create target already exists");
+    }
+    throw error;
+  } finally {
+    await handle?.close();
+  }
+  return {
+    path: request.path,
+    revision: rawByteRevision(bytes),
+    encoding: request.writeAs.encoding,
+    lineEnding: request.writeAs.lineEnding,
+    bom: request.writeAs.bom,
+    writtenBytes: bytes.byteLength
+  };
+}
+async function executeUpdate(workspace, input, options = {}) {
+  const request = validateUpdateRequest(input);
+  const target = await workspace.resolveExistingFile(request.path);
+  const originalBytes = await readFile3(target);
+  const oldRevision = rawByteRevision(originalBytes);
+  assertRevision(request.expectedRevision, oldRevision);
+  const repositoryEncoding = options.repositoryEncoding?.(request.path);
+  const decoded = decodeTextFile(originalBytes, {
+    ...repositoryEncoding === void 0 ? {} : { repositoryEncoding },
+    ...options.legacyFallback === void 0 ? {} : { legacyFallback: options.legacyFallback }
+  });
+  let resultText = decoded.text;
+  let appliedHunks = 0;
+  let addedLines = 0;
+  let removedLines = 0;
+  let appliedContextDiff;
+  if (request.change.type === "context-diff") {
+    const applied = applyContextDiffWithSources(decoded.text, request.change.diff, request.writeAs.lineEnding);
+    appliedContextDiff = applied;
+    resultText = applied.text;
+    appliedHunks = applied.hunksApplied;
+    addedLines = applied.linesAdded;
+    removedLines = applied.linesRemoved;
+  } else if (request.change.type === "replace") {
+    const originalLogical = parseLogicalText(decoded.text);
+    const replacementLogical = parseLogicalText(request.change.content);
+    resultText = formatReplacement(originalLogical, replacementLogical, request.writeAs.lineEnding);
+    addedLines = replacementLogical.lines.length;
+    removedLines = originalLogical.lines.length;
+  } else if (request.writeAs.lineEnding !== "preserve") {
+    resultText = normalizeLineEndings(decoded.text, request.writeAs.lineEnding);
+  }
+  const encoding = request.writeAs.encoding === "preserve" ? decoded.encoding : request.writeAs.encoding;
+  const bom = request.writeAs.bom === "preserve" ? decoded.bom : request.writeAs.bom;
+  const newBytes = appliedContextDiff !== void 0 && request.writeAs.encoding === "preserve" && request.writeAs.lineEnding === "preserve" ? encodeContextDiffPreservingSourceBytes(originalBytes, decoded, appliedContextDiff, bom) : encodeWithBom(resultText, encoding, bom);
+  const status = await lstat2(target);
+  await atomicRevisionGuardedReplace(target, request.expectedRevision, newBytes, status.mode);
+  return {
+    path: request.path,
+    oldRevision,
+    newRevision: rawByteRevision(newBytes),
+    encoding,
+    lineEnding: request.writeAs.lineEnding === "preserve" ? parseLogicalText(resultText).lineEnding : request.writeAs.lineEnding,
+    bom,
+    appliedHunks,
+    addedLines,
+    removedLines,
+    writtenBytes: newBytes.byteLength
+  };
+}
+async function executeDelete(workspace, input) {
+  const request = validateDeleteRequest(input);
+  const target = await workspace.resolveExistingFile(request.path);
+  const observed = await readFile3(target);
+  const oldRevision = rawByteRevision(observed);
+  assertRevision(request.expectedRevision, oldRevision);
+  const rechecked = await readFile3(target);
+  assertRevision(request.expectedRevision, rawByteRevision(rechecked));
+  await unlink(target);
+  return { path: request.path, oldRevision };
+}
+function normalizeLineEndings(text, lineEnding) {
+  const newline = newlineSequence(lineEnding);
+  return parseLogicalText(text).lines.map((line) => `${line.text}${line.newline === null ? "" : newline}`).join("");
+}
+function formatReplacement(original, replacement, lineEnding) {
+  if (lineEnding !== "preserve") {
+    const newline = newlineSequence(lineEnding);
+    return joinLogicalLines(replacement, () => newline);
+  }
+  const originalNewlines = original.lines.flatMap((line) => line.newline === null ? [] : [line.newline]);
+  const fallback = dominantNewline2(originalNewlines);
+  if (original.lineEnding !== "mixed") {
+    return joinLogicalLines(replacement, () => fallback);
+  }
+  return joinLogicalLines(replacement, (index) => original.lines[index]?.newline ?? fallback);
+}
+function encodeWithBom(text, encoding, bom) {
+  if (bom && encoding === "windows-31j") {
+    throw new MutationError("encode_error", "windows-31j does not support a BOM");
+  }
+  const encoded = encodeStrict(text, encoding);
+  if (!bom) {
+    return encoded;
+  }
+  const prefix = encoding === "utf-8" ? [239, 187, 191] : encoding === "utf-16le" ? [255, 254] : [254, 255];
+  return Uint8Array.from([...prefix, ...encoded]);
+}
+function encodeContextDiffPreservingSourceBytes(originalBytes, decoded, applied, bom) {
+  const bodyOffset = decoded.bom ? decoded.encoding === "utf-8" ? 3 : 2 : 0;
+  const sourceLines = splitEncodedLogicalLines(originalBytes.subarray(bodyOffset), decoded.encoding);
+  const outputLines = parseLogicalText(applied.text).lines;
+  if (sourceLines.length !== decoded.logicalText.lines.length || outputLines.length !== applied.lineSources.length) {
+    return encodeWithBom(applied.text, decoded.encoding, bom);
+  }
+  const chunks2 = outputLines.map((line, index) => {
+    const sourceIndex = applied.lineSources[index];
+    if (sourceIndex !== null && sourceIndex !== void 0) {
+      const sourceLine = decoded.logicalText.lines[sourceIndex];
+      if (sourceLine?.text === line.text && sourceLine.newline === line.newline) {
+        return sourceLines[sourceIndex];
+      }
+    }
+    return encodeStrict(`${line.text}${line.newline ?? ""}`, decoded.encoding);
+  });
+  const prefix = bom ? decoded.encoding === "utf-8" ? Uint8Array.from([239, 187, 191]) : decoded.encoding === "utf-16le" ? Uint8Array.from([255, 254]) : decoded.encoding === "utf-16be" ? Uint8Array.from([254, 255]) : (() => {
+    throw new MutationError("encode_error", "windows-31j does not support a BOM");
+  })() : new Uint8Array();
+  return concatenateBytes([prefix, ...chunks2]);
+}
+function splitEncodedLogicalLines(bytes, encoding) {
+  const width = encoding === "utf-16le" || encoding === "utf-16be" ? 2 : 1;
+  const codeUnitAt = (offset) => {
+    if (width === 1)
+      return bytes[offset];
+    return encoding === "utf-16be" ? bytes[offset] << 8 | bytes[offset + 1] : bytes[offset] | bytes[offset + 1] << 8;
+  };
+  const lines = [];
+  let start = 0;
+  for (let offset = 0; offset < bytes.length; offset += width) {
+    const unit = codeUnitAt(offset);
+    if (unit !== 10 && unit !== 13)
+      continue;
+    let end = offset + width;
+    if (unit === 13 && end < bytes.length && codeUnitAt(end) === 10) {
+      end += width;
+      offset += width;
+    }
+    lines.push(bytes.subarray(start, end));
+    start = end;
+  }
+  if (start < bytes.length) {
+    lines.push(bytes.subarray(start));
+  }
+  return lines;
+}
+function concatenateBytes(chunks2) {
+  const result = new Uint8Array(chunks2.reduce((total, chunk) => total + chunk.byteLength, 0));
+  let offset = 0;
+  for (const chunk of chunks2) {
+    result.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return result;
+}
+function joinLogicalLines(logicalText, selectNewline) {
+  return logicalText.lines.map((line, index) => `${line.text}${line.newline === null ? "" : selectNewline(index)}`).join("");
+}
+function dominantNewline2(newlines) {
+  if (newlines.length === 0) {
+    return "\n";
+  }
+  const counts = /* @__PURE__ */ new Map();
+  for (const newline of newlines) {
+    counts.set(newline, (counts.get(newline) ?? 0) + 1);
+  }
+  const maximum = Math.max(...counts.values());
+  return newlines.find((newline) => counts.get(newline) === maximum) ?? "\n";
+}
+async function atomicRevisionGuardedReplace(target, expectedRevision, bytes, mode) {
+  const temporary = join2(dirname(target), `.${basename2(target)}.miku-text-file-ops-${process.pid}-${randomUUID()}.tmp`);
+  let handle;
+  let renamed = false;
+  try {
+    handle = await open(temporary, "wx", mode & 4095);
+    await handle.writeFile(bytes);
+    await handle.sync();
+    await handle.close();
+    handle = void 0;
+    await chmod(temporary, mode & 4095);
+    const rechecked = await readFile3(target);
+    assertRevision(expectedRevision, rawByteRevision(rechecked));
+    await rename(temporary, target);
+    renamed = true;
+  } finally {
+    await handle?.close();
+    if (!renamed) {
+      try {
+        await unlink(temporary);
+      } catch (error) {
+        if (!isNodeCode(error, "ENOENT")) {
+          throw error;
+        }
+      }
+    }
+  }
+}
+function assertRevision(expected, actual) {
+  if (expected !== actual) {
+    throw new MutationError("stale_revision", `Expected revision ${expected}, observed ${actual}`);
+  }
+}
+function newlineSequence(lineEnding) {
+  switch (lineEnding) {
+    case "lf":
+      return "\n";
+    case "crlf":
+      return "\r\n";
+    case "cr":
+      return "\r";
+  }
+}
+function isNodeCode(error, code) {
+  return typeof error === "object" && error !== null && "code" in error && error.code === code;
+}
+
+// dist/src/core/read.js
+import { readFile as readFile4 } from "node:fs/promises";
+
+// dist/src/results/envelope.js
+function createEnvelope(input) {
+  const results = input.results ?? [];
+  const diagnostics = input.diagnostics ?? [];
+  const diagnosticsOmitted = input.diagnosticsOmitted ?? 0;
+  const omittedByCode = input.diagnosticsOmittedByCode ?? {};
+  const completenessReasons = [...input.completenessReasons ?? []].sort();
+  const envelope = {
+    schemaVersion: SCHEMA_VERSION,
+    operation: input.operation,
+    status: input.status,
+    completeness: {
+      complete: input.status === "success" && completenessReasons.length === 0,
+      reasons: completenessReasons
+    },
+    results,
+    diagnostics,
+    diagnosticSummary: {
+      returned: diagnostics.length,
+      omitted: diagnosticsOmitted,
+      byCode: summarizeDiagnostics(diagnostics, omittedByCode)
+    },
+    usage: {
+      limitProfile: LIMIT_PROFILE,
+      textCharsReturned: countReturnedTextScalars(results),
+      resultBytes: 0,
+      recordsReturned: results.length,
+      diagnosticsReturned: diagnostics.length,
+      diagnosticsOmitted,
+      effectiveLimits: input.effectiveLimits,
+      ...input.usage
+    }
+  };
+  settleResultBytes(envelope);
+  return envelope;
+}
+function serializeCanonicalEnvelope(envelope) {
+  settleResultBytes(envelope);
+  return Buffer.from(`${canonicalStringify(envelope)}
+`, "utf8");
+}
+function settleResultBytes(envelope) {
+  let previous = -1;
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    const bytes = Buffer.byteLength(`${canonicalStringify(envelope)}
+`, "utf8");
+    envelope.usage.resultBytes = bytes;
+    if (bytes === previous) {
+      return;
+    }
+    previous = bytes;
+  }
+  throw new Error("usage.resultBytes did not converge");
+}
+function summarizeDiagnostics(diagnostics, omittedByCode) {
+  const counts = /* @__PURE__ */ new Map();
+  for (const diagnostic of diagnostics) {
+    counts.set(diagnostic.code, (counts.get(diagnostic.code) ?? 0) + 1);
+  }
+  for (const [code, count] of Object.entries(omittedByCode)) {
+    counts.set(code, (counts.get(code) ?? 0) + count);
+  }
+  return [...counts].sort(([left], [right]) => compareUnicodeScalars3(left, right)).map(([code, count]) => ({ code, count }));
+}
+function countReturnedTextScalars(value) {
+  let total = 0;
+  visit(value, (key, child) => {
+    if (typeof child === "string" && (key === "text" || key === "beforeContext" || key === "afterContext")) {
+      total += Array.from(child).length;
+    }
+  });
+  return total;
+}
+function visit(value, visitor) {
+  if (Array.isArray(value)) {
+    for (const child of value) {
+      visit(child, visitor);
+    }
+    return;
+  }
+  if (typeof value !== "object" || value === null) {
+    return;
+  }
+  for (const [key, child] of Object.entries(value)) {
+    visitor(key, child);
+    visit(child, visitor);
+  }
+}
+function canonicalStringify(value) {
+  return JSON.stringify(sortObjectKeys(value));
+}
+function sortObjectKeys(value) {
+  if (Array.isArray(value)) {
+    return value.map(sortObjectKeys);
+  }
+  if (typeof value !== "object" || value === null) {
+    return value;
+  }
+  return Object.fromEntries(Object.entries(value).sort(([left], [right]) => compareUnicodeScalars3(left, right)).map(([key, child]) => [key, sortObjectKeys(child)]));
+}
+function compareUnicodeScalars3(left, right) {
+  const leftScalars = Array.from(left);
+  const rightScalars = Array.from(right);
+  const length = Math.min(leftScalars.length, rightScalars.length);
+  for (let index = 0; index < length; index += 1) {
+    const leftCodePoint = leftScalars[index]?.codePointAt(0) ?? 0;
+    const rightCodePoint = rightScalars[index]?.codePointAt(0) ?? 0;
+    if (leftCodePoint !== rightCodePoint) {
+      return leftCodePoint - rightCodePoint;
+    }
+  }
+  return leftScalars.length - rightScalars.length;
+}
+
+// dist/src/core/read.js
+async function executeRead(workspace, input, options = {}) {
+  const validated = validateReadRequest(input);
+  const clamped = applyLimitCeilings(validated.effectiveLimits, options.limitCeilings);
+  const request = {
+    ...validated,
+    effectiveLimits: clamped.effectiveLimits
+  };
+  const state = {
+    request,
+    works: [],
+    diagnostics: [],
+    diagnosticsOmitted: 0,
+    diagnosticsOmittedByCode: {},
+    reasons: /* @__PURE__ */ new Set(),
+    itemsProcessed: 0,
+    itemsSkipped: 0,
+    nextItemIndex: void 0
+  };
+  for (const diagnostic of clamped.diagnostics) {
+    addDiagnostic(state, diagnostic);
+    state.reasons.add(diagnostic.code);
+  }
+  const maximumItems = request.effectiveLimits.maxItems;
+  const processCount = Math.min(request.items.length, maximumItems);
+  if (request.items.length > processCount) {
+    state.reasons.add("item_limit");
+    state.itemsSkipped += request.items.length - processCount;
+    state.nextItemIndex = processCount;
+  }
+  let textCharsRemaining = request.effectiveLimits.maxTextCharsReturned;
+  for (let itemIndex = 0; itemIndex < processCount; itemIndex += 1) {
+    const item = request.items[itemIndex];
+    try {
+      const absolutePath = await workspace.resolveExistingFile(item.path);
+      const bytes = await readFile4(absolutePath);
+      const repositoryEncoding = options.repositoryEncoding?.(item.path);
+      const decoded = decodeTextFile(bytes, {
+        ...item.encoding === void 0 ? {} : { explicitEncoding: item.encoding },
+        ...repositoryEncoding === void 0 ? {} : { repositoryEncoding },
+        ...options.legacyFallback === void 0 ? {} : { legacyFallback: options.legacyFallback }
+      });
+      const work = buildReadWork(item, itemIndex, decoded, request.effectiveLimits.maxLinesPerItem, textCharsRemaining, state);
+      state.works.push(work);
+      state.itemsProcessed += 1;
+      textCharsRemaining -= Array.from(work.record.text).length;
+    } catch (error) {
+      const diagnostic = readDiagnostic(item.path, error);
+      addDiagnostic(state, diagnostic);
+      state.reasons.add(diagnostic.code);
+      state.itemsSkipped += 1;
+    }
+  }
+  enforceResultByteBudget(state);
+  return buildEnvelope(state);
+}
+function buildReadWork(item, itemIndex, decoded, maxLines, textCharsRemaining, state) {
+  const domain = selectedDomain(item.selector, decoded.logicalLines);
+  const direction = "lastLines" in item.selector ? "suffix" : "prefix";
+  const itemReasons = /* @__PURE__ */ new Set();
+  let returned = domain === void 0 ? void 0 : { ...domain };
+  if (returned !== void 0 && rangeLength(returned) > maxLines) {
+    itemReasons.add("line_limit");
+    state.reasons.add("line_limit");
+    returned = direction === "prefix" ? {
+      startLine: returned.startLine,
+      endLine: returned.startLine + maxLines - 1
+    } : {
+      startLine: returned.endLine - maxLines + 1,
+      endLine: returned.endLine
+    };
+  }
+  if (returned !== void 0) {
+    returned = fitTextCharacterBudget(decoded.logicalText.lines, returned, direction, textCharsRemaining, decoded, item, itemReasons, state);
+  }
+  const record = {
+    type: "read",
+    itemIndex,
+    path: item.path,
+    requestedSelection: item.selector,
+    text: renderLines(decoded.logicalText.lines, returned),
+    ...returned === void 0 ? {} : { returnedRange: returned },
+    remainingRanges: remainingRanges(domain, returned),
+    revision: decoded.revision,
+    encoding: decoded.encoding,
+    encodingSource: decoded.encodingSource,
+    bom: decoded.bom,
+    lineEnding: decoded.lineEnding,
+    finalNewline: decoded.finalNewline,
+    rawBytes: decoded.rawBytes,
+    logicalLines: decoded.logicalLines,
+    completeness: {
+      complete: itemReasons.size === 0,
+      reasons: [...itemReasons].sort()
+    }
+  };
+  return {
+    record,
+    lines: decoded.logicalText.lines,
+    domain,
+    direction,
+    returned
+  };
+}
+function fitTextCharacterBudget(lines, requested, direction, remaining, decoded, item, itemReasons, state) {
+  let used = 0;
+  let accepted = 0;
+  const indexes = direction === "prefix" ? sequence(requested.startLine, requested.endLine, 1) : sequence(requested.endLine, requested.startLine, -1);
+  for (const lineNumber of indexes) {
+    const line = lines[lineNumber - 1];
+    const chars = Array.from(`${line.text}${line.newline === null ? "" : "\n"}`).length;
+    if (used + chars > remaining) {
+      if (accepted === 0 && chars > state.request.effectiveLimits.maxTextCharsReturned) {
+        itemReasons.add("line_too_large");
+        state.reasons.add("line_too_large");
+        addDiagnostic(state, {
+          severity: "warning",
+          code: "line_too_large",
+          message: `Logical line ${lineNumber} cannot fit the text budget`,
+          path: item.path,
+          line: lineNumber,
+          details: {
+            textChars: chars,
+            encoding: decoded.encoding
+          }
+        });
+      } else {
+        itemReasons.add("text_char_limit");
+        state.reasons.add("text_char_limit");
+      }
+      break;
+    }
+    used += chars;
+    accepted += 1;
+  }
+  if (accepted === 0) {
+    return void 0;
+  }
+  return direction === "prefix" ? {
+    startLine: requested.startLine,
+    endLine: requested.startLine + accepted - 1
+  } : {
+    startLine: requested.endLine - accepted + 1,
+    endLine: requested.endLine
+  };
+}
+function enforceResultByteBudget(state) {
+  const limit = state.request.effectiveLimits.maxResultBytes;
+  while (serializeCanonicalEnvelope(buildEnvelope(state)).byteLength > limit) {
+    state.reasons.add("result_byte_limit");
+    const work = [...state.works].reverse().find((candidate) => candidate.returned !== void 0);
+    if (work !== void 0) {
+      trimReturnedRange(work, state);
+      continue;
+    }
+    if (state.works.length > 0) {
+      const removed = state.works.pop();
+      state.itemsProcessed -= 1;
+      state.itemsSkipped += 1;
+      state.nextItemIndex = state.nextItemIndex === void 0 ? removed.record.itemIndex : Math.min(state.nextItemIndex, removed.record.itemIndex);
+      continue;
+    }
+    if (state.diagnostics.length > 0) {
+      omitDiagnostic(state, state.diagnostics.pop());
+      continue;
+    }
+    throw new Error("Minimal READ envelope exceeds maxResultBytes");
+  }
+}
+function trimReturnedRange(work, state) {
+  const returned = work.returned;
+  if (returned.startLine === returned.endLine) {
+    addDiagnostic(state, {
+      severity: "warning",
+      code: "line_too_large",
+      message: `Logical line ${returned.startLine} cannot fit the result byte budget`,
+      path: work.record.path,
+      line: returned.startLine
+    });
+    state.reasons.add("line_too_large");
+    work.returned = void 0;
+    delete work.record.returnedRange;
+  } else if (work.direction === "prefix") {
+    work.returned = {
+      startLine: returned.startLine,
+      endLine: returned.endLine - 1
+    };
+    work.record.returnedRange = work.returned;
+  } else {
+    work.returned = {
+      startLine: returned.startLine + 1,
+      endLine: returned.endLine
+    };
+    work.record.returnedRange = work.returned;
+  }
+  work.record.text = renderLines(work.lines, work.returned);
+  work.record.remainingRanges = remainingRanges(work.domain, work.returned);
+  work.record.completeness = {
+    complete: false,
+    reasons: [.../* @__PURE__ */ new Set([
+      ...work.record.completeness.reasons,
+      "result_byte_limit"
+    ])].sort()
+  };
+}
+function buildEnvelope(state) {
+  const records = state.works.map((work) => work.record);
+  const status = state.reasons.size === 0 ? "success" : records.length > 0 ? "partial" : "failed";
+  return createEnvelope({
+    operation: "read",
+    status,
+    completenessReasons: [...state.reasons],
+    results: records,
+    diagnostics: state.diagnostics,
+    diagnosticsOmitted: state.diagnosticsOmitted,
+    diagnosticsOmittedByCode: state.diagnosticsOmittedByCode,
+    effectiveLimits: state.request.effectiveLimits,
+    usage: {
+      itemsRequested: state.request.items.length,
+      itemsProcessed: state.itemsProcessed,
+      itemsSkipped: state.itemsSkipped,
+      ...state.nextItemIndex === void 0 ? {} : { nextItemIndex: state.nextItemIndex }
+    }
+  });
+}
+function selectedDomain(selector, logicalLines) {
+  if (logicalLines === 0) {
+    return void 0;
+  }
+  if ("full" in selector) {
+    return { startLine: 1, endLine: logicalLines };
+  }
+  if ("range" in selector) {
+    if (selector.range.startLine > logicalLines) {
+      return void 0;
+    }
+    return {
+      startLine: selector.range.startLine,
+      endLine: Math.min(selector.range.endLine, logicalLines)
+    };
+  }
+  if ("firstLines" in selector) {
+    return {
+      startLine: 1,
+      endLine: Math.min(selector.firstLines, logicalLines)
+    };
+  }
+  return {
+    startLine: Math.max(1, logicalLines - selector.lastLines + 1),
+    endLine: logicalLines
+  };
+}
+function remainingRanges(domain, returned) {
+  if (domain === void 0) {
+    return [];
+  }
+  if (returned === void 0) {
+    return [domain];
+  }
+  const ranges2 = [];
+  if (domain.startLine < returned.startLine) {
+    ranges2.push({
+      startLine: domain.startLine,
+      endLine: returned.startLine - 1
+    });
+  }
+  if (returned.endLine < domain.endLine) {
+    ranges2.push({
+      startLine: returned.endLine + 1,
+      endLine: domain.endLine
+    });
+  }
+  return ranges2;
+}
+function renderLines(lines, range) {
+  if (range === void 0) {
+    return "";
+  }
+  return lines.slice(range.startLine - 1, range.endLine).map((line) => `${line.text}${line.newline === null ? "" : "\n"}`).join("");
+}
+function sequence(start, end, step) {
+  const values = [];
+  for (let value = start; step === 1 ? value <= end : value >= end; value += step) {
+    values.push(value);
+  }
+  return values;
+}
+function rangeLength(range) {
+  return range.endLine - range.startLine + 1;
+}
+function addDiagnostic(state, diagnostic) {
+  if (state.diagnostics.length < state.request.effectiveLimits.maxDiagnostics) {
+    state.diagnostics.push(diagnostic);
+  } else {
+    omitDiagnostic(state, diagnostic);
+    state.reasons.add("diagnostic_limit");
+  }
+}
+function omitDiagnostic(state, diagnostic) {
+  state.diagnosticsOmitted += 1;
+  state.diagnosticsOmittedByCode[diagnostic.code] = (state.diagnosticsOmittedByCode[diagnostic.code] ?? 0) + 1;
+}
+function readDiagnostic(path, error) {
+  if (error instanceof TextFileError) {
+    return {
+      severity: "error",
+      code: error.code,
+      message: error.message,
+      path,
+      ...error.byteOffset === void 0 ? {} : { byteOffset: error.byteOffset },
+      ...error.encoding === void 0 ? {} : { details: { encoding: error.encoding } }
+    };
+  }
+  if (typeof error === "object" && error !== null && "code" in error && typeof error.code === "string") {
+    return {
+      severity: "error",
+      code: error.code,
+      message: error instanceof Error ? error.message : String(error),
+      path
+    };
+  }
+  return {
+    severity: "error",
+    code: "source_error",
+    message: error instanceof Error ? error.message : String(error),
+    path
+  };
+}
+
+// dist/src/core/search.js
+import { readFile as readFile5 } from "node:fs/promises";
+async function executeSearch(workspace, input, options = {}) {
+  const validated = validateSearchRequest(input);
+  const clamped = applyLimitCeilings(validated.effectiveLimits, options.limitCeilings);
+  const request = {
+    ...validated,
+    effectiveLimits: clamped.effectiveLimits
+  };
+  const scan = await workspace.scan({
+    include: request.include,
+    exclude: request.exclude,
+    maxFiles: request.effectiveLimits.maxFilesVisited
+  });
+  const state = {
+    request,
+    records: [],
+    diagnostics: [],
+    diagnosticsOmitted: 0,
+    diagnosticsOmittedByCode: {},
+    reasons: /* @__PURE__ */ new Set(),
+    filesVisited: 0,
+    bytesRead: 0
+  };
+  for (const diagnostic of clamped.diagnostics) {
+    addDiagnostic2(state, diagnostic);
+    state.reasons.add(diagnostic.code);
+  }
+  for (const diagnostic of scan.diagnostics) {
+    addDiagnostic2(state, diagnostic);
+    state.reasons.add(diagnostic.code);
+  }
+  if (scan.truncated) {
+    state.reasons.add("file_visit_limit");
+  }
+  if (request.mode === "paths") {
+    executePathSearch(state, scan.files, !scan.truncated);
+  } else {
+    await executeContentSearch(state, scan.files, request, options, !scan.truncated);
+  }
+  enforceSearchResultByteBudget(state);
+  return buildSearchEnvelope(state);
+}
+function executePathSearch(state, candidates, discoveryComplete) {
+  const request = state.request;
+  if (request.mode !== "paths") {
+    throw new Error("Path request expected");
+  }
+  const visited = candidates;
+  state.filesVisited = visited.length;
+  let scanComplete = discoveryComplete;
+  if (!scanComplete) {
+    state.reasons.add("file_visit_limit");
+  }
+  let projectionRecords = [];
+  if (request.projection === "files") {
+    const returned = visited.slice(0, request.effectiveLimits.maxFilesReturned);
+    projectionRecords = returned.map((file) => ({
+      type: "file",
+      path: file.path,
+      rawBytes: file.rawBytes
+    }));
+    if (returned.length < visited.length) {
+      scanComplete = false;
+      state.reasons.add("file_result_limit");
+    }
+  } else if (request.projection === "summary") {
+    projectionRecords = buildFacetRecords(request.facets, visited.map((file) => ({ file, matches: 0 })), request.effectiveLimits.maxFacetValues, scanComplete && state.diagnostics.length === 0, false);
+  }
+  const exact = scanComplete && state.diagnostics.length === 0;
+  const filesReturned = projectionRecords.filter((record) => record.type === "file").length;
+  state.records = [
+    {
+      type: "searchSummary",
+      mode: "paths",
+      scanComplete,
+      filesVisited: state.filesVisited,
+      filesMatched: exact ? visited.length : null,
+      filesMatchedAtLeast: exact ? null : visited.length,
+      filesReturned
+    },
+    ...projectionRecords
+  ];
+}
+async function executeContentSearch(state, candidates, request, options, discoveryComplete) {
+  const matchesLine = buildLineMatcher(request);
+  const projectionRecords = [];
+  const matchedForFacets = [];
+  let scanComplete = discoveryComplete;
+  let filesDecoded = 0;
+  let filesSkipped = 0;
+  let filesMatchedObserved = 0;
+  let matchesObserved = 0;
+  let matchesExact = true;
+  let stopTraversal = false;
+  let textCharsReturned = 0;
+  for (const file of candidates) {
+    if (state.filesVisited >= request.effectiveLimits.maxFilesVisited) {
+      scanComplete = false;
+      state.reasons.add("file_visit_limit");
+      break;
+    }
+    if (state.bytesRead + file.rawBytes > request.effectiveLimits.maxSourceBytes) {
+      scanComplete = false;
+      state.reasons.add("source_byte_limit");
+      break;
+    }
+    state.filesVisited += 1;
+    state.bytesRead += file.rawBytes;
+    let decoded;
+    try {
+      const bytes = await readFile5(file.absolutePath);
+      const repositoryEncoding = options.repositoryEncoding?.(file.path);
+      decoded = decodeTextFile(bytes, {
+        ...repositoryEncoding === void 0 ? {} : { repositoryEncoding },
+        ...options.legacyFallback === void 0 ? {} : { legacyFallback: options.legacyFallback }
+      });
+      filesDecoded += 1;
+    } catch (error) {
+      filesSkipped += 1;
+      const diagnostic = searchDiagnostic(file.path, error);
+      addDiagnostic2(state, diagnostic);
+      state.reasons.add(diagnostic.code);
+      continue;
+    }
+    let fileMatches = 0;
+    let firstMatchLine;
+    for (const line of decoded.logicalText.lines) {
+      if (!matchesLine(line.text)) {
+        continue;
+      }
+      fileMatches += 1;
+      matchesObserved += 1;
+      firstMatchLine ??= line.number;
+      if (request.projection === "files") {
+        matchesExact = false;
+        break;
+      }
+      if (request.projection !== "matches") {
+        continue;
+      }
+      if (fileMatches > request.effectiveLimits.maxMatchesPerFile) {
+        matchesExact = false;
+        state.reasons.add("match_limit");
+        break;
+      }
+      if (projectionRecords.filter((record2) => record2.type === "match").length >= request.effectiveLimits.maxMatches) {
+        scanComplete = false;
+        matchesExact = false;
+        state.reasons.add("match_limit");
+        stopTraversal = true;
+        break;
+      }
+      const record = buildMatchRecord(file.path, line, decoded.logicalText.lines, decoded.encoding, request.beforeContext, request.afterContext);
+      const contextTrimmed = trimMatchToTextBudget(record, request.effectiveLimits.maxTextCharsReturned - textCharsReturned);
+      if (contextTrimmed) {
+        state.reasons.add("text_char_limit");
+      }
+      const recordChars = matchRecordTextChars(record);
+      if (recordChars > request.effectiveLimits.maxTextCharsReturned - textCharsReturned) {
+        state.reasons.add("text_char_limit");
+        scanComplete = false;
+        matchesExact = false;
+        stopTraversal = true;
+        break;
+      }
+      if (!canAdmitSearchRecord(state, projectionRecords, record, request)) {
+        state.reasons.add("result_byte_limit");
+        scanComplete = false;
+        matchesExact = false;
+        stopTraversal = true;
+        break;
+      }
+      textCharsReturned += recordChars;
+      projectionRecords.push(record);
+    }
+    if (fileMatches > 0) {
+      filesMatchedObserved += 1;
+      matchedForFacets.push({ file, matches: fileMatches });
+      if (request.projection === "files") {
+        if (projectionRecords.filter((record) => record.type === "file").length >= request.effectiveLimits.maxFilesReturned) {
+          state.reasons.add("file_result_limit");
+          scanComplete = false;
+          stopTraversal = true;
+        } else {
+          const record = {
+            type: "file",
+            path: file.path,
+            rawBytes: file.rawBytes,
+            firstMatchLine
+          };
+          if (!canAdmitSearchRecord(state, projectionRecords, record, request)) {
+            state.reasons.add("result_byte_limit");
+            scanComplete = false;
+            stopTraversal = true;
+          } else {
+            projectionRecords.push(record);
+          }
+        }
+      }
+    }
+    if (stopTraversal) {
+      break;
+    }
+  }
+  if (request.projection === "summary") {
+    projectionRecords.push(...buildFacetRecords(request.facets, matchedForFacets, request.effectiveLimits.maxFacetValues, scanComplete && filesSkipped === 0, true));
+  }
+  const fileTotalsExact = scanComplete && filesSkipped === 0;
+  const matchTotalsExact = fileTotalsExact && matchesExact && request.projection !== "files";
+  const filesReturned = projectionRecords.filter((record) => record.type === "file").length;
+  const matchesReturned = projectionRecords.filter((record) => record.type === "match").length;
+  state.records = [
+    {
+      type: "searchSummary",
+      mode: "content",
+      scanComplete,
+      matchUnit: "logicalLine",
+      filesVisited: state.filesVisited,
+      filesDecoded,
+      filesSkipped,
+      filesMatched: fileTotalsExact ? filesMatchedObserved : null,
+      filesMatchedAtLeast: fileTotalsExact ? null : filesMatchedObserved,
+      matchesFound: matchTotalsExact ? matchesObserved : null,
+      matchesFoundAtLeast: matchTotalsExact ? null : matchesObserved,
+      filesReturned,
+      matchesReturned
+    },
+    ...projectionRecords
+  ];
+}
+function buildLineMatcher(request) {
+  if (request.syntax === "regex") {
+    const regex = compileSafeRegex(request.pattern, {
+      caseSensitive: request.caseSensitive
+    });
+    return (line) => regex.matchesLine(line);
+  }
+  if (request.caseSensitive) {
+    return (line) => line.includes(request.pattern);
+  }
+  const foldedPattern = simpleCaseFold(request.pattern);
+  return (line) => simpleCaseFold(line).includes(foldedPattern);
+}
+function buildMatchRecord(path, line, lines, encoding, before, after) {
+  return {
+    type: "match",
+    path,
+    line: line.number,
+    text: line.text,
+    beforeContext: lines.slice(Math.max(0, line.number - 1 - before), line.number - 1).map((context) => ({ line: context.number, text: context.text })),
+    afterContext: lines.slice(line.number, line.number + after).map((context) => ({ line: context.number, text: context.text })),
+    encoding
+  };
+}
+function trimMatchToTextBudget(record, remaining) {
+  let trimmed = false;
+  while (matchRecordTextChars(record) > remaining && record.afterContext.length > 0) {
+    record.afterContext = record.afterContext.slice(0, -1);
+    trimmed = true;
+  }
+  while (matchRecordTextChars(record) > remaining && record.beforeContext.length > 0) {
+    record.beforeContext = record.beforeContext.slice(1);
+    trimmed = true;
+  }
+  return trimmed;
+}
+function canAdmitSearchRecord(state, admitted, candidate, request) {
+  const summary = {
+    type: "searchSummary",
+    mode: "content",
+    scanComplete: false,
+    matchUnit: "logicalLine",
+    filesVisited: state.filesVisited,
+    filesDecoded: state.filesVisited,
+    filesSkipped: 0,
+    filesMatched: null,
+    filesMatchedAtLeast: 0,
+    matchesFound: null,
+    matchesFoundAtLeast: 0,
+    filesReturned: [...admitted, candidate].filter((record) => record.type === "file").length,
+    matchesReturned: [...admitted, candidate].filter((record) => record.type === "match").length
+  };
+  const previous = state.records;
+  state.records = [summary, ...admitted, candidate];
+  const fits = serializeCanonicalEnvelope(buildSearchEnvelope(state)).byteLength <= request.effectiveLimits.maxResultBytes;
+  state.records = previous;
+  return fits;
+}
+function matchRecordTextChars(record) {
+  return Array.from(record.text).length + record.beforeContext.reduce((total, context) => total + Array.from(context.text).length, 0) + record.afterContext.reduce((total, context) => total + Array.from(context.text).length, 0);
+}
+function buildFacetRecords(facets, matched, maximumValues, exact, content) {
+  const records = [];
+  for (const facet of facets) {
+    const counts = /* @__PURE__ */ new Map();
+    for (const entry of matched) {
+      const value = facetValue(facet, entry.file.path);
+      const current = counts.get(value) ?? { files: 0, matches: 0 };
+      current.files += 1;
+      current.matches += entry.matches;
+      counts.set(value, current);
+    }
+    const ordered = [...counts.entries()].sort((left, right) => {
+      const countDifference = content ? right[1].matches - left[1].matches : right[1].files - left[1].files;
+      return countDifference !== 0 ? countDifference : compareUnicodeScalars4(left[0], right[0]);
+    });
+    const returned = ordered.slice(0, maximumValues);
+    for (const [value, count] of returned) {
+      records.push({
+        type: "facet",
+        facet,
+        value,
+        files: count.files,
+        ...content ? { matches: count.matches } : {},
+        exact
+      });
+    }
+    const omitted = ordered.slice(maximumValues);
+    if (omitted.length > 0) {
+      records.push({
+        type: "facetRemainder",
+        facet,
+        valuesOmitted: omitted.length,
+        files: omitted.reduce((sum, entry) => sum + entry[1].files, 0),
+        ...content ? {
+          matches: omitted.reduce((sum, entry) => sum + entry[1].matches, 0)
+        } : {},
+        exact
+      });
+    }
+  }
+  return records;
+}
+function facetValue(facet, path) {
+  if (facet === "topLevelPath") {
+    const slash2 = path.indexOf("/");
+    return slash2 === -1 ? "" : path.slice(0, slash2);
+  }
+  const slash = path.lastIndexOf("/");
+  const basename3 = slash === -1 ? path : path.slice(slash + 1);
+  const dot = basename3.lastIndexOf(".");
+  return dot <= 0 ? "" : basename3.slice(dot);
+}
+function enforceSearchResultByteBudget(state) {
+  const limit = state.request.effectiveLimits.maxResultBytes;
+  while (serializeCanonicalEnvelope(buildSearchEnvelope(state)).byteLength > limit) {
+    state.reasons.add("result_byte_limit");
+    if (state.records.length > 1) {
+      state.records.pop();
+      refreshReturnedCounts(state.records[0], state.records);
+      continue;
+    }
+    if (state.diagnostics.length > 0) {
+      omitDiagnostic2(state, state.diagnostics.pop());
+      continue;
+    }
+    throw new Error("Minimal SEARCH envelope exceeds maxResultBytes");
+  }
+}
+function refreshReturnedCounts(summary, records) {
+  summary.filesReturned = records.filter((record) => record.type === "file").length;
+  if (summary.mode === "content") {
+    summary.matchesReturned = records.filter((record) => record.type === "match").length;
+  }
+}
+function buildSearchEnvelope(state) {
+  const status = state.reasons.size === 0 ? "success" : state.records.length > 0 ? "partial" : "failed";
+  return createEnvelope({
+    operation: "search",
+    status,
+    completenessReasons: [...state.reasons],
+    results: state.records,
+    diagnostics: state.diagnostics,
+    diagnosticsOmitted: state.diagnosticsOmitted,
+    diagnosticsOmittedByCode: state.diagnosticsOmittedByCode,
+    effectiveLimits: state.request.effectiveLimits,
+    usage: {
+      filesVisited: state.filesVisited,
+      bytesRead: state.bytesRead
+    }
+  });
+}
+function addDiagnostic2(state, diagnostic) {
+  if (state.diagnostics.length < state.request.effectiveLimits.maxDiagnostics) {
+    state.diagnostics.push(diagnostic);
+  } else {
+    omitDiagnostic2(state, diagnostic);
+    state.reasons.add("diagnostic_limit");
+  }
+}
+function omitDiagnostic2(state, diagnostic) {
+  state.diagnosticsOmitted += 1;
+  state.diagnosticsOmittedByCode[diagnostic.code] = (state.diagnosticsOmittedByCode[diagnostic.code] ?? 0) + 1;
+}
+function searchDiagnostic(path, error) {
+  if (error instanceof TextFileError) {
+    return {
+      severity: "warning",
+      code: error.code,
+      message: error.message,
+      path,
+      ...error.byteOffset === void 0 ? {} : { byteOffset: error.byteOffset },
+      ...error.encoding === void 0 ? {} : { details: { encoding: error.encoding } }
+    };
+  }
+  return {
+    severity: "warning",
+    code: "source_error",
+    message: error instanceof Error ? error.message : String(error),
+    path
+  };
+}
 function compareUnicodeScalars4(left, right) {
   const leftScalars = Array.from(left);
   const rightScalars = Array.from(right);
@@ -9698,7 +10159,7 @@ function compareUnicodeScalars4(left, right) {
 
 // dist/src/metadata.js
 var PRODUCT_NAME = "miku-text-file-ops";
-var PRODUCT_VERSION = "0.4.0";
+var PRODUCT_VERSION = "0.4.1";
 
 // dist/src/help.js
 var EXAMPLE_REVISION = `sha256:${"0".repeat(64)}`;
@@ -9921,11 +10382,36 @@ async function executeCli(args2, stdin, cwd) {
     return renderFailure(parsed, error, true);
   }
   try {
+    validateOperationRequest(parsed.operation, request);
+  } catch (error) {
+    return renderFailure(parsed, error, isRequestFailure(error), request);
+  }
+  try {
     const workspace = await Workspace.open(parsed.root);
-    const envelope = await dispatch(parsed.operation, workspace, request);
+    const policy = await loadRepositoryTextPolicy(workspace);
+    const envelope = await dispatch(parsed.operation, workspace, request, policy);
     return renderExecution(parsed, envelope, exitForEnvelope(envelope));
   } catch (error) {
-    return renderFailure(parsed, error, isRequestFailure(error));
+    return renderFailure(parsed, error, isRequestFailure(error), request);
+  }
+}
+function validateOperationRequest(operation, request) {
+  switch (operation) {
+    case "search":
+      validateSearchRequest(request);
+      return;
+    case "read":
+      validateReadRequest(request);
+      return;
+    case "create":
+      validateCreateRequest(request);
+      return;
+    case "update":
+      validateUpdateRequest(request);
+      return;
+    case "delete":
+      validateDeleteRequest(request);
+      return;
   }
 }
 function metadataExecution(args2) {
@@ -10008,18 +10494,23 @@ function parseRequest(stdin) {
     throw new CliRequestError("invalid_json", "Standard input must contain exactly one valid JSON document");
   }
 }
-async function dispatch(operation, workspace, request) {
+async function dispatch(operation, workspace, request, policy) {
+  const coreOptions = {
+    repositoryEncoding: policy.repositoryEncoding,
+    limitCeilings: AGENT_V1_LIMITS,
+    ...policy.legacyFallback === void 0 ? {} : { legacyFallback: policy.legacyFallback }
+  };
   switch (operation) {
     case "search":
-      return executeSearch(workspace, request);
+      return executeSearch(workspace, request, coreOptions);
     case "read":
-      return executeRead(workspace, request);
+      return executeRead(workspace, request, coreOptions);
     case "create": {
       const result = await executeCreate(workspace, request);
       return mutationEnvelope(operation, { type: operation, ...result });
     }
     case "update": {
-      const result = await executeUpdate(workspace, request);
+      const result = await executeUpdate(workspace, request, coreOptions);
       return mutationEnvelope(operation, { type: operation, ...result });
     }
     case "delete": {
@@ -10036,16 +10527,45 @@ function mutationEnvelope(operation, result) {
     effectiveLimits: effectiveAgentV1Limits()
   });
 }
-function renderFailure(parsed, error, requestError) {
-  const diagnostics = error instanceof RequestValidationError ? error.diagnostics : [diagnosticFromError(error)];
-  const envelope = createEnvelope({
+function renderFailure(parsed, error, requestError, request) {
+  const allDiagnostics = error instanceof RequestValidationError ? error.diagnostics : [diagnosticFromError(error)];
+  const effectiveLimits = failureEffectiveLimits(parsed.operation, request);
+  const diagnostics = allDiagnostics.slice(0, effectiveLimits.maxDiagnostics);
+  const omittedByCode = {};
+  for (const diagnostic of allDiagnostics.slice(diagnostics.length)) {
+    omittedByCode[diagnostic.code] = (omittedByCode[diagnostic.code] ?? 0) + 1;
+  }
+  const reasons = [...new Set(allDiagnostics.map((diagnostic) => diagnostic.code))];
+  const build = () => createEnvelope({
     operation: parsed.operation,
     status: "failed",
-    completenessReasons: diagnostics.map((diagnostic) => diagnostic.code),
+    completenessReasons: reasons,
     diagnostics,
-    effectiveLimits: effectiveAgentV1Limits()
+    diagnosticsOmitted: allDiagnostics.length - diagnostics.length,
+    diagnosticsOmittedByCode: omittedByCode,
+    effectiveLimits
   });
+  let envelope = build();
+  while (serializeCanonicalEnvelope(envelope).byteLength > effectiveLimits.maxResultBytes && diagnostics.length > 0) {
+    const omitted = diagnostics.pop();
+    omittedByCode[omitted.code] = (omittedByCode[omitted.code] ?? 0) + 1;
+    envelope = build();
+  }
+  if (serializeCanonicalEnvelope(envelope).byteLength > effectiveLimits.maxResultBytes) {
+    throw new Error("Minimal CLI failure envelope exceeds maxResultBytes");
+  }
   return renderExecution(parsed, envelope, requestError ? CLI_EXIT.requestError : CLI_EXIT.runtimeError);
+}
+function failureEffectiveLimits(operation, request) {
+  if (operation !== "read" && operation !== "search" || typeof request !== "object" || request === null || Array.isArray(request)) {
+    return effectiveAgentV1Limits();
+  }
+  try {
+    const limits = validateLimits(request["limits"]);
+    return applyLimitCeilings(limits, AGENT_V1_LIMITS).effectiveLimits;
+  } catch {
+    return effectiveAgentV1Limits();
+  }
 }
 function renderExecution(parsed, envelope, exitCode) {
   const canonical = serializeCanonicalEnvelope(envelope);
@@ -10149,7 +10669,10 @@ function diagnosticFromError(error) {
       severity: "error",
       code: "encode_error",
       message: error.message,
-      details: { encoding: error.encoding }
+      details: {
+        encoding: error.encoding,
+        ...error.characterOffset === void 0 ? {} : { characterOffset: error.characterOffset }
+      }
     };
   }
   if (error instanceof TextDecodingError) {
@@ -10157,6 +10680,7 @@ function diagnosticFromError(error) {
       severity: "error",
       code: "decode_error",
       message: error.message,
+      ...error.byteOffset === void 0 ? {} : { byteOffset: error.byteOffset },
       details: { encoding: error.encoding }
     };
   }

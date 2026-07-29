@@ -119,8 +119,9 @@ Maintain two explicit version records:
 - `skillPackageVersion`: the version in this repository's `package.json`
 - `bundledProductVersion`: the version reported by the received upstream CLI
 
-They may initially both be `0.3.2`, but tests and documentation must not assume
-that equality is permanent.
+As the repository's release-versioning rule, these versions are identical.
+Verify both records independently so that accidental drift fails before
+release.
 
 The upstream package and CLI bundle currently target Node.js 22. Set this
 repository's installed runtime requirement to Node.js `>=22`, verify Node.js 22
@@ -184,8 +185,8 @@ installed Skill metadata.
 
 1. Select the upstream GitHub Release, tag, and commit used as the
    compatibility source.
-2. Prefer the reviewed `v0.3.2` release when available. Use `v0.3.1` only if an
-   earlier Skills release is intentionally required.
+2. Accept only the reviewed Release asset for the version selected by the
+   Skills package; the current accepted version is `v0.4.1`.
 3. Have a human place the standalone CLI release asset under
    `skills/miku-text-file-ops/runtime/`.
 4. Record the original asset URL, release tag, commit, received filename,
@@ -300,21 +301,27 @@ The Skill workflow must implement these accepted routing rules:
 5. Use zero search-context lines by default.
 6. Around match line `L`, initially read
    `max(1, L - 40)` through `L + 40`.
-7. Merge overlapping ranges for the same file.
+7. Merge overlapping ranges for the same file, splitting a merged range into
+   bounded adjacent ranges when it exceeds the effective per-item line limit.
 8. If no match line is known, start with `firstLines: 120`.
 9. Use full-file read only when most of the file is needed and its known raw
    size is at most 16 KiB, or when the user explicitly asks for the whole file.
 10. Treat `partial`, lower-bound counts, `exact: false`, skipped items,
     `remainingRanges`, and `usage.nextItemIndex` as incomplete evidence.
-11. Refine the query before raising limits.
-12. For `update` and `delete`, first obtain the full-file raw-byte revision with
-    `read`.
-13. For `create`, do not read a nonexistent target.
-14. Perform one single-file mutation per invocation.
-15. Prefer `context-diff` for updates.
-16. On `stale_revision`, read again and rebuild the request; do not retry
+11. Resubmit only still-needed unprocessed items when `usage.nextItemIndex` is
+    present, and never combine bounded responses into unbounded model output.
+12. Refine the query before raising a limit; raise it only for a concrete
+    exhaustive requirement within the host ceiling.
+13. For `update`, obtain all required patch context and the full-file raw-byte
+    revision with a bounded `read`; a full-file read is not required.
+14. For `delete`, confirm the target and obtain its revision without requiring
+    unrelated source text.
+15. For `create`, do not read a nonexistent target.
+16. Perform one single-file mutation per invocation.
+17. Prefer `context-diff` for updates.
+18. On `stale_revision`, read again and rebuild the request; do not retry
     blindly.
-17. Treat a successful mutation result as authoritative and re-read only when
+19. Treat a successful mutation result as authoritative and re-read only when
     semantic confirmation is needed.
 
 For an encoding-sensitive target, never read with `miku-text-file-ops` and then
@@ -474,13 +481,14 @@ The initial repository is ready when:
 - negative routing tests remain with ordinary native tools
 - no work-in-progress upstream surface is advertised as accepted behavior
 
-## First Execution Gate
+## First Execution Gate History
 
-Before runtime wiring begins, decide one of:
+This gate is complete. The Skills `v0.3.2` release established the plan and
+repository foundation without wiring an unreviewed runtime. The project then
+intentionally accepted the upstream `v0.3.1` Release asset in Skills `v0.3.5`
+and passed the first installed metadata and data-operation checks.
 
-1. wait for the reviewed upstream `v0.3.2` Release and receive
-   `miku-text-file-ops-0.3.2.mjs` (recommended)
-2. intentionally begin with the reviewed `v0.3.1` Release asset
-
-Do not resolve this gate by copying the current uncommitted upstream `0.3.2`
-bundle.
+The uncommitted upstream `0.3.2` worktree candidate was never used as release
+input. Later runtime updates continue to require a reviewed Release asset,
+recorded provenance, an independent digest and version check, and isolated
+bundle execution.

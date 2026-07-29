@@ -40,7 +40,7 @@ test("bundled runtime exposes version and help metadata", () => {
   const version = runMikuTextFileOps({ args: ["--version"] });
   assert.equal(version.status, 0);
   assert.equal(version.stderr, "");
-  assert.equal(version.stdout, "0.4.0\n");
+  assert.equal(version.stdout, "0.4.1\n");
 
   const help = runMikuTextFileOps({ args: ["--help"] });
   assert.equal(help.status, 0);
@@ -61,10 +61,10 @@ test("package version matches the bundled runtime version", () => {
 test("bundled runtime digest and size match the accepted upstream asset", () => {
   const runtime = resolveRuntimeArtifact();
   const bytes = fs.readFileSync(runtime.path);
-  assert.equal(bytes.length, 698665);
+  assert.equal(bytes.length, 718307);
   assert.equal(
     crypto.createHash("sha256").update(bytes).digest("hex"),
-    "f505fc005e4016b96392b00701cadb19deab417d1c2593a37b926e707300b582"
+    "af5c3c80eb48e1e8890e439015fd177d242b50e5af87d24b73d0dda5f7c7ef73"
   );
 });
 
@@ -217,6 +217,45 @@ test("launcher preserves actionable partial search and read results", () => {
     endLine: 20,
     startLine: 3
   }]);
+});
+
+test("partial count remains a lower bound instead of a false exact total", () => {
+  const { result, response } = runJson("search", {
+    mode: "paths",
+    projection: "count",
+    limits: { maxFilesVisited: 1 }
+  });
+  assert.equal(result.status, 1);
+  assert.equal(response.status, "partial");
+  assert.equal(response.completeness.complete, false);
+  const summary = response.results.find(
+    (record) => record.type === "searchSummary"
+  );
+  assert.equal(summary.scanComplete, false);
+  assert.equal(summary.filesMatched, null);
+  assert.equal(summary.filesMatchedAtLeast, 1);
+});
+
+test("partial multi-item read exposes a suffix-only resubmission point", () => {
+  const items = [
+    { path: "README.md", firstLines: 1 },
+    { path: "skills/miku-text-file-ops/SKILL.md", firstLines: 1 }
+  ];
+  const { result, response } = runJson("read", {
+    items,
+    limits: { maxItems: 1 }
+  });
+  assert.equal(result.status, 1);
+  assert.equal(response.status, "partial");
+  assert.equal(response.usage.nextItemIndex, 1);
+  assert.equal(response.usage.itemsProcessed, 1);
+  assert.equal(response.usage.itemsSkipped, 1);
+
+  const continuation = runJson("read", {
+    items: items.slice(response.usage.nextItemIndex)
+  });
+  assert.equal(continuation.result.status, 0);
+  assert.equal(continuation.response.results[0].path, items[1].path);
 });
 
 function runJson(command, request) {

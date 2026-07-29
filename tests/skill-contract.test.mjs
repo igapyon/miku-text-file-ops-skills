@@ -11,10 +11,18 @@ test("skill contract is narrow and directly routes bundled references", () => {
   assert.match(skill, /^---\nname: miku-text-file-ops\n/m);
   assert.match(skill, /Do not activate for ordinary UTF-8/);
   assert.match(skill, /references\/runtime\.md/);
+  assert.match(skill, /references\/search-read\.md/);
+  assert.match(skill, /references\/mutations\.md/);
   assert.match(skill, /references\/workflow\.md/);
   assert.match(skill, /references\/response-handling\.md/);
   assert.match(skill, /index\.json/);
   assert.ok(skill.split(/\n/).length <= 200);
+
+  const references = fs.readdirSync(path.resolve(skillRoot, "references"))
+    .filter((name) => name.endsWith(".md"));
+  for (const name of references) {
+    assert.match(skill, new RegExp(`references/${escapeRegExp(name)}`), name);
+  }
 });
 
 test("skill metadata covers positive triggers and negative boundaries", () => {
@@ -25,11 +33,15 @@ test("skill metadata covers positive triggers and negative boundaries", () => {
     "miku-text-file-ops",
     "miku-text-file-ops-skills",
     "non-UTF-8",
+    "mixed encodings",
+    "repository encoding rules",
     "Windows-31J",
+    "explicit encoding conversion",
     "BOM",
     "newline preservation",
     "mojibake",
-    "decode errors"
+    "decode errors",
+    "unexpectedly skipped text files"
   ]) {
     assert.match(description, new RegExp(escapeRegExp(expected)));
   }
@@ -51,7 +63,33 @@ test("skill routes projections, bounded reads, and partial responses", () => {
   assert.match(skill, /`max\(1, L - 40\)` through `L \+ 40`/);
   assert.match(skill, /`firstLines: 120`/);
   assert.match(skill, /Refine a query before raising output limits/);
+  assert.match(skill, /bounded `read`.*full-file raw-byte revision/s);
   assert.match(skill, /response-handling\.md.*result is partial/s);
+});
+
+test("progressive references separate core routing from operation details", () => {
+  const workflow = fs.readFileSync(
+    path.resolve(skillRoot, "references/workflow.md"),
+    "utf8"
+  );
+  const searchRead = fs.readFileSync(
+    path.resolve(skillRoot, "references/search-read.md"),
+    "utf8"
+  );
+  const mutations = fs.readFileSync(
+    path.resolve(skillRoot, "references/mutations.md"),
+    "utf8"
+  );
+
+  assert.doesNotMatch(workflow, /81-line window/);
+  assert.doesNotMatch(workflow, /`count` for existence/);
+  assert.match(searchRead, /## Search/);
+  assert.match(searchRead, /## Read/);
+  assert.doesNotMatch(searchRead, /--json update/);
+  assert.match(mutations, /## Create/);
+  assert.match(mutations, /## Update/);
+  assert.match(mutations, /## Delete/);
+  assert.doesNotMatch(mutations, /--json search/);
 });
 
 test("skill description and body stay within context-budget targets", (context) => {

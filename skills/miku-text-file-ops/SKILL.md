@@ -1,6 +1,6 @@
 ---
 name: miku-text-file-ops
-description: Use when the user explicitly names `miku-text-file-ops` or `miku-text-file-ops-skills`, or when encoding-aware local text operations are required for non-UTF-8 files, Windows-31J, BOM or newline preservation, mojibake, or decode errors. Run the bundled standalone CLI for search, read, create, update, and delete. Do not activate for ordinary UTF-8 reading, generic source search, routine patching, binary files, or code review.
+description: Use when the user explicitly names `miku-text-file-ops` or `miku-text-file-ops-skills`, or when encoding-aware local text operations are required for non-UTF-8 files, mixed encodings, repository encoding rules, Windows-31J, explicit encoding conversion, BOM or newline preservation, mojibake, decode errors, or unexpectedly skipped text files. Run the bundled standalone CLI for search, read, create, update, and delete. Do not activate for ordinary UTF-8 reading, generic source search, routine patching, binary files, or code review.
 ---
 
 # Miku Text File Ops
@@ -8,15 +8,6 @@ description: Use when the user explicitly names `miku-text-file-ops` or `miku-te
 Use the bundled upstream CLI as a thin adapter for encoding-sensitive local
 text-file work. Keep decoding, encoding, path, patch, revision, and response
 semantics in the upstream runtime.
-
-## Activation
-
-Activate only when the user names this product or the task requires its
-encoding-preserving behavior. Continue an already active workflow after an
-explicit trigger.
-
-Without those conditions, use ordinary native tools. Do not take over generic
-UTF-8 reading, grep, source editing, binary-file work, or code review.
 
 ## Runtime
 
@@ -39,7 +30,11 @@ unusable, stop with a hard error and report the expected runtime location. Do
 not fall back to Java, MCP, native patching, or a Skill-local implementation.
 
 Read [references/runtime.md](references/runtime.md) when resolving or invoking
-the runtime.
+the runtime. Read
+[references/search-read.md](references/search-read.md) for search, read, and
+encoding-policy requests. Read
+[references/mutations.md](references/mutations.md) before create, update, or
+delete.
 
 ## Workflow
 
@@ -48,14 +43,19 @@ the runtime.
    projection: `count`, `summary`, `files`, then `matches`.
 3. Use `read` with bounded ranges. Around a known match line `L`, begin with
    `max(1, L - 40)` through `L + 40`; otherwise begin with `firstLines: 120`.
-4. Refine a query before raising output limits.
-5. Before `update` or `delete`, obtain the full-file raw-byte revision with
-   `read`. For `create`, do not read a nonexistent target.
-6. Perform one single-file mutation per invocation. Prefer `context-diff` for
+4. Merge overlapping windows. Split a merged window into adjacent ranges when
+   it exceeds the effective per-item line limit.
+5. Refine a query before raising output limits. Raise one only for a concrete
+   exhaustive requirement within the host ceiling.
+6. Before `update`, use a bounded `read` that returns the required patch
+   context and full-file raw-byte revision. Before `delete`, confirm the target
+   and obtain its revision; source text beyond that confirmation is unnecessary.
+   For `create`, do not read a nonexistent target.
+7. Perform one single-file mutation per invocation. Prefer `context-diff` for
    updates.
-7. On `stale_revision`, read again and rebuild the request. Never retry a stale
+8. On `stale_revision`, read again and rebuild the request. Never retry a stale
    mutation blindly.
-8. Preserve the runtime's stdout, stderr, exit status, and structured result.
+9. Preserve the runtime's stdout, stderr, exit status, and structured result.
 
 Read [references/workflow.md](references/workflow.md) for operation selection
 and mutation safeguards. Read

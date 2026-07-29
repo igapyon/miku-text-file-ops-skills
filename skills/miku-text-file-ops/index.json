@@ -4,14 +4,16 @@
  "generation": {"schemaVersion":1,"inputPath":".","markdownOutput":false,"recursive":true,"includeExtensions":["md","json","mjs","yaml","txt"],"inputEncoding":"utf8","outputEncoding":"utf8","title":"miku-text-file-ops Skill Index","includeGeneratorMetadata":true},
  "basePath": ".",
  "files": [
-  {"name":"SKILL.md","path":"SKILL.md","ext":"md","dir":"","size":3353,"description":"Use when the user explicitly names `miku-text-file-ops` or `miku-text-file-ops-skills`, or when encoding-aware local text operations are required for non-UTF-8 files, Windows-31J, BOM or newline preservation, mojibake, or decode errors. Run the bundled ...","summary":"Miku Text File Ops"},
+  {"name":"SKILL.md","path":"SKILL.md","ext":"md","dir":"","size":3685,"description":"Use when the user explicitly names `miku-text-file-ops` or `miku-text-file-ops-skills`, or when encoding-aware local text operations are required for non-UTF-8 files, mixed encodings, repository encoding rules, Windows-31J, explicit encoding conversion,...","summary":"Miku Text File Ops"},
   {"name":"openai.yaml","path":"agents/openai.yaml","ext":"yaml","dir":"agents","size":211},
   {"name":"run-miku-text-file-ops.mjs","path":"lib/run-miku-text-file-ops.mjs","ext":"mjs","dir":"lib","size":1355},
   {"name":"runtime-artifacts.mjs","path":"lib/runtime-artifacts.mjs","ext":"mjs","dir":"lib","size":1720},
   {"name":"UNICODE-LICENSE.txt","path":"licenses/UNICODE-LICENSE.txt","ext":"txt","dir":"licenses","size":1995},
-  {"name":"response-handling.md","path":"references/response-handling.md","ext":"md","dir":"references","size":807,"summary":"Response Handling"},
+  {"name":"mutations.md","path":"references/mutations.md","ext":"md","dir":"references","size":1183,"summary":"Mutation Requests"},
+  {"name":"response-handling.md","path":"references/response-handling.md","ext":"md","dir":"references","size":2066,"summary":"Response Handling"},
   {"name":"runtime.md","path":"references/runtime.md","ext":"md","dir":"references","size":1100,"summary":"Runtime"},
-  {"name":"workflow.md","path":"references/workflow.md","ext":"md","dir":"references","size":1293,"summary":"Operation Workflow"},
-  {"name":"miku-text-file-ops-0.4.0.mjs","path":"runtime/miku-text-file-ops-0.4.0.mjs","ext":"mjs","dir":"runtime","size":698665}
+  {"name":"search-read.md","path":"references/search-read.md","ext":"md","dir":"references","size":1213,"summary":"Search and Read Requests"},
+  {"name":"workflow.md","path":"references/workflow.md","ext":"md","dir":"references","size":1203,"summary":"Operation Workflow"},
+  {"name":"miku-text-file-ops-0.4.1.mjs","path":"runtime/miku-text-file-ops-0.4.1.mjs","ext":"mjs","dir":"runtime","size":718307}
  ]
 }
