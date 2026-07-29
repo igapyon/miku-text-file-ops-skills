@@ -27,7 +27,7 @@ test("release zip contains the installable Skill and standalone runtime only", (
     "skills/miku-text-file-ops/index.json",
     "skills/miku-text-file-ops/lib/runtime-artifacts.mjs",
     "skills/miku-text-file-ops/lib/run-miku-text-file-ops.mjs",
-    "skills/miku-text-file-ops/runtime/miku-text-file-ops-0.3.1.mjs",
+    "skills/miku-text-file-ops/runtime/miku-text-file-ops-0.4.0.mjs",
     "skills/miku-text-file-ops/licenses/LICENSE",
     "skills/miku-text-file-ops/licenses/UNICODE-LICENSE.txt"
   ]) {
@@ -49,7 +49,7 @@ test("isolated extracted bundle runs runtime metadata through its launcher", () 
     );
     assert.equal(
       execFileSync(process.execPath, [launcher, "--version"], { encoding: "utf8" }),
-      "0.3.1\n"
+      "0.4.0\n"
     );
   } finally {
     fs.rmSync(temporaryRoot, { recursive: true, force: true });

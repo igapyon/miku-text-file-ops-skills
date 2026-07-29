@@ -19,10 +19,10 @@ standalone Node.js CLI release artifact.
 The plan is consistent with the upstream specification and accepted Agent Skill
 integration design after these clarifications:
 
-- Track the Agent Skill package version and the bundled product runtime version
-  as separate values, even when the first release gives them the same number.
+- Keep the Agent Skill package version and bundled product runtime version
+  identical as the default release-versioning rule.
 - Verify the product runtime version with artifact provenance and `--version`;
-  never infer it from the Agent Skill package version.
+  never infer it only from the Agent Skill package version.
 - If the declared CLI artifact is missing or unusable, stop with a hard runtime
   error and recovery instructions. Do not switch silently to native patching,
   the importable runtime bundle, Java, or MCP.
@@ -457,7 +457,7 @@ The initial repository is ready when:
 
 - the upstream repository URL, tag, commit, artifact, SHA-256, and product
   version are pinned
-- the Skill package version is recorded separately
+- the Skill package version matches the bundled product runtime version
 - the standalone CLI is the only bundled execution artifact
 - `SKILL.md` has the accepted trigger and non-trigger boundary
 - the Skill does not duplicate core semantics

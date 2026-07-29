@@ -34,6 +34,9 @@ The received standalone CLI lives under
 [`docs/upstream-runtime.md`](docs/upstream-runtime.md) for its provenance and
 verification record.
 
+As the default release-versioning rule, the package version and bundled
+upstream CLI version are identical.
+
 ## Repository Operation
 
 - `skills/miku-text-file-ops/` is the canonical installable source.
