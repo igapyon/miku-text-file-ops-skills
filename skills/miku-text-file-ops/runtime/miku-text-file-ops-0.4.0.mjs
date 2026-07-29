@@ -9698,7 +9698,7 @@ function compareUnicodeScalars4(left, right) {
 
 // dist/src/metadata.js
 var PRODUCT_NAME = "miku-text-file-ops";
-var PRODUCT_VERSION = "0.3.1";
+var PRODUCT_VERSION = "0.4.0";
 
 // dist/src/help.js
 var EXAMPLE_REVISION = `sha256:${"0".repeat(64)}`;

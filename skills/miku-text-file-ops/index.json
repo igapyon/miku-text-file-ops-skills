@@ -12,6 +12,6 @@
   {"name":"response-handling.md","path":"references/response-handling.md","ext":"md","dir":"references","size":807,"summary":"Response Handling"},
   {"name":"runtime.md","path":"references/runtime.md","ext":"md","dir":"references","size":1100,"summary":"Runtime"},
   {"name":"workflow.md","path":"references/workflow.md","ext":"md","dir":"references","size":1293,"summary":"Operation Workflow"},
-  {"name":"miku-text-file-ops-0.3.1.mjs","path":"runtime/miku-text-file-ops-0.3.1.mjs","ext":"mjs","dir":"runtime","size":698665}
+  {"name":"miku-text-file-ops-0.4.0.mjs","path":"runtime/miku-text-file-ops-0.4.0.mjs","ext":"mjs","dir":"runtime","size":698665}
  ]
 }

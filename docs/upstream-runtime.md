@@ -8,23 +8,25 @@ upstream `miku-text-file-ops` GitHub Release.
 | Field | Value |
 | --- | --- |
 | Upstream repository | `https://github.com/igapyon/miku-text-file-ops` |
-| Release | `v0.3.1` |
-| Release URL | `https://github.com/igapyon/miku-text-file-ops/releases/tag/v0.3.1` |
-| Asset | `miku-text-file-ops-0.3.1.mjs` |
-| Received path | `skills/miku-text-file-ops/runtime/miku-text-file-ops-0.3.1.mjs` |
+| Release | `v0.4.0` |
+| Release URL | `https://github.com/igapyon/miku-text-file-ops/releases/tag/v0.4.0` |
+| Asset | `miku-text-file-ops-0.4.0.mjs` |
+| Received path | `skills/miku-text-file-ops/runtime/miku-text-file-ops-0.4.0.mjs` |
 | Received date | 2026-07-29 |
 | Size | 698665 bytes |
-| SHA-256 | `148963640dce0259d97a9e878226596c215e4ce00d1de581ebf6c8d0998245d9` |
-| Reported version | `0.3.1` |
+| SHA-256 | `f505fc005e4016b96392b00701cadb19deab417d1c2593a37b926e707300b582` |
+| Reported version | `0.4.0` |
 
-The Agent Skill package version is independent from the bundled upstream
-runtime version.
+As the release-versioning rule, the Agent Skill package version must match the
+bundled upstream runtime version. Verify the runtime independently from its
+artifact provenance and `--version`; do not assume that matching package
+metadata proves the bundled artifact version.
 
 ## Artifact Roles
 
-Only `miku-text-file-ops-0.3.1.mjs` is executable in this Skill.
+Only `miku-text-file-ops-0.4.0.mjs` is executable in this Skill.
 
-`miku-text-file-ops-runtime-0.3.1.mjs` is an importable API bundle and is not
+`miku-text-file-ops-runtime-0.4.0.mjs` is an importable API bundle and is not
 received or executed. The source archive is not a runtime artifact.
 
 ## Verification
