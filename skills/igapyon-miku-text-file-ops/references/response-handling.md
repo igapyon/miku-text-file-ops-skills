@@ -53,3 +53,38 @@ fields.
 - `3`: valid-request operation failure or unexpected runtime error
 
 Always parse the JSON envelope on nonzero exit.
+
+## Revision Conflicts
+
+For `stale_revision`, the mutation was rejected because the target's raw bytes
+changed after the read that supplied `expectedRevision`. Use the structured
+diagnostic fields; do not parse the human-readable message.
+
+```json
+{
+  "severity": "error",
+  "code": "stale_revision",
+  "path": "notes.txt",
+  "details": {
+    "expectedRevision": "sha256:<revision-from-read>",
+    "actualRevision": "sha256:<revision-at-mutation>",
+    "recovery": "reread_and_rebuild_request",
+    "retryUnchangedRequest": false
+  }
+}
+```
+
+The stable recovery is to read the target again, review the latest content,
+rebuild the intended mutation, and send a new request with the new revision.
+Do not blindly resend the old request, substitute `actualRevision` into an old
+request, or switch to an unrelated patch tool to bypass the revision guard.
+
+This revision compares the last read with current raw bytes, not the file with
+Git `HEAD`. Compare retained bounded context with a new bounded read. Use the
+revision returned by that read; another process may have changed the file again
+after the diagnostic's `actualRevision`.
+
+If the intervening edit overlaps the intended change, makes the target
+ambiguous, changes the encoding policy, repeats during recovery, or could be
+lost by rebuilding, do not mutate. Present the path, intended change, and the
+minimum old and current context needed for the user to decide.

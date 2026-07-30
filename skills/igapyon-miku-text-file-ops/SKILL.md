@@ -9,20 +9,27 @@ Use the bundled upstream CLI as a thin adapter for encoding-sensitive local
 text-file work. Keep decoding, encoding, path, patch, revision, and response
 semantics in the upstream runtime.
 
-## Runtime
+## Execution Contract
 
-Require Node.js 22 or newer. Resolve a versioned standalone CLI from
-`runtime/miku-text-file-ops-<version>.mjs`, relative to this Skill directory.
-Use the newest valid filename version.
+Require Node.js 22 or newer. Resolve the installed Skill root and read
+`index.json` before discovering bundled files. Keep that root separate from the
+project or workspace root being operated on.
 
-Run it through:
+For data operations, use only the bundled launcher:
 
 ```bash
-node lib/run-miku-text-file-ops.mjs --root <workspace> --json <command>
+node "<installed-skill-root>/lib/run-miku-text-file-ops.mjs" \
+  --root "<project-root>" --json <command>
 ```
 
-Pass one UTF-8 JSON request on stdin. Commands are exactly `search`, `read`,
-`create`, `update`, and `delete`.
+Pass exactly one UTF-8 no-BOM JSON request on stdin. `--json` selects the
+machine-readable stdout format; it does not select the input format. Request
+paths are relative to `--root`. Commands are exactly `search`, `read`, `create`,
+`update`, and `delete`.
+
+Never locate or obtain the CLI through `npx`, `npm install`, a bare-command
+`PATH` search, an npm registry search, or a network download. Never substitute
+another installed copy.
 
 Never execute `miku-text-file-ops-runtime-<version>.mjs`; that artifact is an
 importable API bundle, not the CLI. If the standalone CLI is missing or
@@ -31,8 +38,10 @@ not fall back to Java, MCP, native patching, or a Skill-local implementation.
 
 Read [references/runtime.md](references/runtime.md) when resolving or invoking
 the runtime. Read
-[references/search-read.md](references/search-read.md) for search, read, and
-encoding-policy requests. Read
+[references/encoding-policy.md](references/encoding-policy.md) whenever
+repository rules, encodings, BOM, or line endings affect a decision. Read
+[references/search-read.md](references/search-read.md) for search and read
+requests. Read
 [references/mutations.md](references/mutations.md) before create, update, or
 delete.
 
@@ -53,12 +62,20 @@ delete.
    For `create`, do not read a nonexistent target.
 7. Perform one single-file mutation per invocation. Prefer `context-diff` for
    updates.
-8. On `stale_revision`, read again and rebuild the request. Never retry a stale
-   mutation blindly.
+8. On `stale_revision`, inspect the structured diagnostic details, read again,
+   review the latest content, and rebuild the request. Never retry the
+   unchanged mutation blindly. If the latest content conflicts with the user's
+   intent or rebuilding could discard an intervening change, stop and present
+   the bounded conflict to the user.
 9. Preserve the runtime's stdout, stderr, exit status, and structured result.
 
+After an encoding-sensitive requirement is established, keep using the bundled
+CLI for every matching path in the current work scope through search, read,
+mutation, verification, follow-up fixes, and conflict recovery. Do not extend
+that scope to unrelated ordinary UTF-8 paths.
+
 Read [references/workflow.md](references/workflow.md) for operation selection
-and mutation safeguards. Read
+work-scope continuity, and mutation safeguards. Read
 [references/response-handling.md](references/response-handling.md) when a
 result is partial, nonzero, or diagnostic-heavy.
 
@@ -70,4 +87,3 @@ result is partial, nonzero, or diagnostic-heavy.
   with an unrelated patch tool.
 - Do not advertise JSONL, exhaustive streaming, managed artifacts,
   continuation tokens, capability caches, `doctor`, or state commands.
-- Read [index.json](index.json) first when discovering bundled files.

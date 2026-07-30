@@ -31,6 +31,15 @@ integration design after these clarifications:
   the importable runtime bundle, Java, or MCP.
 - Leave workspace authorization, sandbox enforcement, external-root access, and
   destructive-operation approval to the host or agent harness.
+- Resolve and invoke the bundled launcher from the installed Skill root. Do not
+  search npm, use `npx`, install a replacement, or rely on a bare command name.
+- Pass large request JSON as UTF-8 without BOM through stdin. In a
+  workspace-only harness, prefer ignored control files under
+  `<project-root>/workplace/tmp/miku-text-file-ops/`; a host-authorized secure
+  OS temporary directory remains valid.
+- Keep encoding-sensitive work routed through this Skill for the current task,
+  project root, and matching path or encoding rule. Do not extend that routing
+  to unrelated ordinary UTF-8 files.
 - Do not advertise work-in-progress JSONL, exhaustive-stream, artifact,
   continuation, capability-cache, `doctor`, or state-management behavior.
 
@@ -165,12 +174,12 @@ skills/
       openai.yaml
     references/
       INDEX.md
-      search-and-read.md
+      search-read.md
       mutations.md
       response-handling.md
-      encoding-and-paths.md
+      encoding-policy.md
       runtime.md
-      examples.md
+      workflow.md
     lib/
       runtime-artifacts.mjs
       cli-runner.mjs
@@ -193,7 +202,7 @@ installed Skill metadata.
 1. Select the upstream GitHub Release, tag, and commit used as the
    compatibility source.
 2. Accept only the reviewed Release asset for the version selected by the
-   Skills package; the current accepted version is `v0.4.1`.
+   Skills package; the current accepted version is `v0.5.0`.
 3. Have a human place the standalone CLI release asset under
    `skills/igapyon-miku-text-file-ops/runtime/`.
 4. Record the original asset URL, release tag, commit, received filename,
@@ -327,9 +336,17 @@ The Skill workflow must implement these accepted routing rules:
 16. Perform one single-file mutation per invocation.
 17. Prefer `context-diff` for updates.
 18. On `stale_revision`, read again and rebuild the request; do not retry
-    blindly.
+    blindly. Compare the reread context with the intended edit, continue only
+    when the edit can be rebuilt safely, and ask the user when intervening
+    changes overlap or invalidate the intended mutation.
 19. Treat a successful mutation result as authoritative and re-read only when
     semantic confirmation is needed.
+20. Once encoding-sensitive work activates the Skill, continue using it for
+    matching search, read, mutation, verification, test-follow-up, and stale
+    recovery within the current task and project root.
+21. Keep control JSON separate from target text encoding. Control JSON is
+    UTF-8 without BOM; target decoding and writing remain governed by the CLI
+    request and `.mikusoft/miku-text-file-ops.json`.
 
 For an encoding-sensitive target, never read with `miku-text-file-ops` and then
 write with an unrelated patch tool.
@@ -364,8 +381,12 @@ Automate at least these tests:
 - release ZIP contents and exclusions
 - isolated installed-bundle runtime execution
 
-Use temporary directories for mutation tests. Tests do not authorize
-destructive operations against user workspaces.
+Use isolated temporary directories for mutation tests. When the harness limits
+write access to the project or repeatedly asks for external-root approval,
+prefer ignored paths under `workplace/tmp/miku-text-file-ops/`. Create and
+remove exact test artifacts inside one repository test process where practical;
+do not use broad cleanup commands. Tests do not authorize destructive
+operations against user workspaces.
 
 Run repository tests with Node.js 22 and 24. Use Node.js 24 for the release
 bundle build.

@@ -1,11 +1,13 @@
 # Search and Read Requests
 
-Send exactly one UTF-8 JSON object on stdin from the installed Skill directory.
+Use the installed launcher and transport contract in
+[runtime.md](runtime.md). Send exactly one UTF-8 no-BOM JSON object on stdin.
 
 ## Search
 
 ```bash
-node lib/run-miku-text-file-ops.mjs --root <workspace> --json search <<'JSON'
+node "<installed-skill-root>/lib/run-miku-text-file-ops.mjs" \
+  --root "<project-root>" --json search <<'JSON'
 {"mode":"paths","projection":"files","include":["**/*.md"]}
 JSON
 ```
@@ -16,7 +18,8 @@ For content evidence, use `mode: "content"` and provide `pattern`. Choose
 ## Read
 
 ```bash
-node lib/run-miku-text-file-ops.mjs --root <workspace> --json read <<'JSON'
+node "<installed-skill-root>/lib/run-miku-text-file-ops.mjs" \
+  --root "<project-root>" --json read <<'JSON'
 {"items":[{"path":"README.md","firstLines":120}]}
 JSON
 ```
@@ -27,10 +30,7 @@ Consult the bundled CLI's `--help` for the complete request-field contract.
 
 ## Encoding Policy
 
-Repository path rules belong in
-`.mikusoft/miku-text-file-ops.json`. The upstream CLI loads them for content
-search, read, and update. Do not parse or merge this file in the Skill.
-
-An item-level `encoding` on `read` is an explicit override for that read item.
-Use it when the caller has authoritative file-specific knowledge. It does not
-replace repository policy for content search or update.
+Path search does not decode files. Content search and read use repository
+encoding policy; a read item may override its own encoding. Read
+[encoding-policy.md](encoding-policy.md) for the resolution order and do not
+parse or merge repository policy in the Skill.

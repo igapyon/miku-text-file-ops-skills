@@ -83,6 +83,114 @@ test("skill routes projections, bounded reads, and partial responses", () => {
   assert.match(skill, /response-handling\.md.*result is partial/s);
 });
 
+test("skill routes the v0.5.0 transport and stale-revision contracts", () => {
+  const skill = fs.readFileSync(path.resolve(skillRoot, "SKILL.md"), "utf8");
+  const runtime = fs.readFileSync(
+    path.resolve(skillRoot, "references/runtime.md"),
+    "utf8"
+  );
+  const mutations = fs.readFileSync(
+    path.resolve(skillRoot, "references/mutations.md"),
+    "utf8"
+  );
+  const responses = fs.readFileSync(
+    path.resolve(skillRoot, "references/response-handling.md"),
+    "utf8"
+  );
+  const workflow = fs.readFileSync(
+    path.resolve(skillRoot, "references/workflow.md"),
+    "utf8"
+  );
+
+  assert.match(skill, /structured diagnostic details/);
+  assert.match(skill, /installed Skill root/);
+  assert.match(skill, /project or workspace root/);
+  assert.match(skill, /<installed-skill-root>\/lib\/run-miku-text-file-ops\.mjs/);
+  for (const forbidden of [
+    "npx",
+    "npm install",
+    "PATH",
+    "npm registry",
+    "network download"
+  ]) {
+    assert.match(skill, new RegExp(escapeRegExp(forbidden)));
+  }
+  assert.match(runtime, /UTF-8 no-BOM temporary file/);
+  assert.match(runtime, /`--json` selects one canonical JSON response on stdout/);
+  assert.match(runtime, /stdout, stderr, and the process exit\s+code separately/);
+  assert.match(runtime, /type "%TEMP%/);
+  assert.match(runtime, /< "%TEMP%/);
+  assert.match(runtime, /<project-root>\/workplace\/tmp\/miku-text-file-ops/);
+  assert.match(runtime, /exclude `workplace\/\*\*` from CLI searches/);
+  assert.match(runtime, /do\s+not stage the files/);
+  assert.match(runtime, /miku-text-file-ops#15/);
+  assert.match(runtime, /Target files may use Windows-31J/);
+  assert.match(mutations, /stale_revision/);
+  assert.match(mutations, /Do not resend the unchanged request/);
+  assert.match(mutations, /present the bounded conflict to the user/);
+  assert.match(responses, /expectedRevision/);
+  assert.match(responses, /actualRevision/);
+  assert.match(responses, /reread_and_rebuild_request/);
+  assert.match(responses, /retryUnchangedRequest/);
+  assert.match(responses, /not the file with\s+Git `HEAD`/);
+  assert.match(workflow, /Encoding-Sensitive Work Scope/);
+  assert.match(workflow, /Turn and Harness Boundary/);
+  assert.match(workflow, /stale_revision \(mutation not applied\)/);
+});
+
+test("encoding policy documents the v0.5.0 operation contract", () => {
+  const skill = fs.readFileSync(path.resolve(skillRoot, "SKILL.md"), "utf8");
+  const policy = fs.readFileSync(
+    path.resolve(skillRoot, "references/encoding-policy.md"),
+    "utf8"
+  );
+  const searchRead = fs.readFileSync(
+    path.resolve(skillRoot, "references/search-read.md"),
+    "utf8"
+  );
+  const mutations = fs.readFileSync(
+    path.resolve(skillRoot, "references/mutations.md"),
+    "utf8"
+  );
+
+  assert.match(skill, /references\/encoding-policy\.md/);
+  assert.match(searchRead, /encoding-policy\.md/);
+  assert.match(mutations, /encoding-policy\.md/);
+  assert.match(policy, /\.mikusoft\/miku-text-file-ops\.json/);
+  assert.match(policy, /\*\*\/\*\.java/);
+  assert.match(policy, /\*\*\/\*\.jsp/);
+  assert.match(policy, /first match wins/);
+  assert.match(policy, /path `search`.*Does not decode/s);
+  assert.match(policy, /content `search`.*Uses rule/s);
+  assert.match(policy, /explicit `writeAs\.encoding`.*matching `encodingRules`/s);
+  assert.match(policy, /zero-byte file/);
+  assert.match(policy, /defaultCreate.*deprecated alias/);
+  assert.match(policy, /does not parse, merge, or reimplement this policy/);
+});
+
+test("all operation examples use the installed launcher and explicit root", () => {
+  const searchRead = fs.readFileSync(
+    path.resolve(skillRoot, "references/search-read.md"),
+    "utf8"
+  );
+  const mutations = fs.readFileSync(
+    path.resolve(skillRoot, "references/mutations.md"),
+    "utf8"
+  );
+  const examples = `${searchRead}\n${mutations}`;
+  for (const command of ["search", "read", "create", "update", "delete"]) {
+    assert.match(
+      examples,
+      new RegExp(
+        `<installed-skill-root>/lib/run-miku-text-file-ops\\.mjs"[\\s\\S]*?` +
+        `--root "<project-root>" --json ${command}`
+      ),
+      command
+    );
+  }
+  assert.doesNotMatch(examples, /^node lib\/run-miku-text-file-ops/m);
+});
+
 test("progressive references separate core routing from operation details", () => {
   const workflow = fs.readFileSync(
     path.resolve(skillRoot, "references/workflow.md"),
@@ -96,6 +204,10 @@ test("progressive references separate core routing from operation details", () =
     path.resolve(skillRoot, "references/mutations.md"),
     "utf8"
   );
+  const policy = fs.readFileSync(
+    path.resolve(skillRoot, "references/encoding-policy.md"),
+    "utf8"
+  );
 
   assert.doesNotMatch(workflow, /81-line window/);
   assert.doesNotMatch(workflow, /`count` for existence/);
@@ -106,6 +218,7 @@ test("progressive references separate core routing from operation details", () =
   assert.match(mutations, /## Update/);
   assert.match(mutations, /## Delete/);
   assert.doesNotMatch(mutations, /--json search/);
+  assert.match(policy, /## Operation Matrix/);
 });
 
 test("skill description and body stay within context-budget targets", (context) => {

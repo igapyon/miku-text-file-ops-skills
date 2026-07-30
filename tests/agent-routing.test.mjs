@@ -92,6 +92,10 @@ test("Skill references encode every context-efficiency guard", () => {
     path.resolve(skillRoot, "references/mutations.md"),
     "utf8"
   );
+  const policy = fs.readFileSync(
+    path.resolve(skillRoot, "references/encoding-policy.md"),
+    "utf8"
+  );
 
   assert.match(skill, /Split a merged window into adjacent ranges/);
   assert.match(skill, /bounded `read`.*required patch/s);
@@ -105,6 +109,7 @@ test("Skill references encode every context-efficiency guard", () => {
   assert.match(mutations, /--json create/);
   assert.match(mutations, /--json update/);
   assert.match(mutations, /--json delete/);
-  assert.match(searchRead, /repository path rules/i);
-  assert.match(searchRead, /item-level `encoding`/);
+  assert.match(searchRead, /repository\s+encoding policy/i);
+  assert.match(policy, /explicit read-item encoding/);
+  assert.match(policy, /first matching repository encoding rule/);
 });

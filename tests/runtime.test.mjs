@@ -40,7 +40,7 @@ test("bundled runtime exposes version and help metadata", () => {
   const version = runMikuTextFileOps({ args: ["--version"] });
   assert.equal(version.status, 0);
   assert.equal(version.stderr, "");
-  assert.equal(version.stdout, "0.4.1\n");
+  assert.equal(version.stdout, "0.5.0\n");
 
   const help = runMikuTextFileOps({ args: ["--help"] });
   assert.equal(help.status, 0);
@@ -58,17 +58,17 @@ test("package and bundled runtime versions follow the patch-drift policy", () =>
   const packageParts = packageJson.version.split(".").map(Number);
   const runtimeParts = version.stdout.trim().split(".").map(Number);
   assert.deepEqual(packageParts.slice(0, 2), runtimeParts.slice(0, 2));
-  assert.deepEqual(packageParts, [0, 4, 2]);
-  assert.deepEqual(runtimeParts, [0, 4, 1]);
+  assert.deepEqual(packageParts, [0, 5, 0]);
+  assert.deepEqual(runtimeParts, [0, 5, 0]);
 });
 
 test("bundled runtime digest and size match the accepted upstream asset", () => {
   const runtime = resolveRuntimeArtifact();
   const bytes = fs.readFileSync(runtime.path);
-  assert.equal(bytes.length, 718307);
+  assert.equal(bytes.length, 721066);
   assert.equal(
     crypto.createHash("sha256").update(bytes).digest("hex"),
-    "af5c3c80eb48e1e8890e439015fd177d242b50e5af87d24b73d0dda5f7c7ef73"
+    "70f925490589698bae0d45774383ca9fbb90b6fa37631ce68450dc701f1b91ed"
   );
 });
 
