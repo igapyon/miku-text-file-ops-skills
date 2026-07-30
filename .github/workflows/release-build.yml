@@ -32,8 +32,8 @@ jobs:
 
       - name: Verify bundled CLI runtime
         run: |
-          node skills/miku-text-file-ops/lib/run-miku-text-file-ops.mjs --version
-          node skills/miku-text-file-ops/lib/run-miku-text-file-ops.mjs --help
+          node skills/igapyon-miku-text-file-ops/lib/run-miku-text-file-ops.mjs --version
+          node skills/igapyon-miku-text-file-ops/lib/run-miku-text-file-ops.mjs --help
 
       - name: Build release bundle
         run: npm run build

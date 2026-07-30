@@ -5,8 +5,11 @@ import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import test from "node:test";
 
+import { resolveRuntimeArtifact } from "../skills/igapyon-miku-text-file-ops/lib/runtime-artifacts.mjs";
+
 const root = process.cwd();
 const packageJson = JSON.parse(fs.readFileSync(path.resolve(root, "package.json"), "utf8"));
+const runtime = resolveRuntimeArtifact();
 const zipPath = path.resolve(
   root,
   `bundle/igapyon-miku-text-file-ops-skills-${packageJson.version}.zip`
@@ -23,21 +26,25 @@ test("release zip contains the installable Skill and standalone runtime only", (
   }).trim().split(/\n/).filter(Boolean);
 
   for (const required of [
-    "skills/miku-text-file-ops/SKILL.md",
-    "skills/miku-text-file-ops/index.json",
-    "skills/miku-text-file-ops/lib/runtime-artifacts.mjs",
-    "skills/miku-text-file-ops/lib/run-miku-text-file-ops.mjs",
-    `skills/miku-text-file-ops/runtime/miku-text-file-ops-${packageJson.version}.mjs`,
-    "skills/miku-text-file-ops/licenses/LICENSE",
-    "skills/miku-text-file-ops/licenses/UNICODE-LICENSE.txt"
+    "skills/igapyon-miku-text-file-ops/SKILL.md",
+    "skills/igapyon-miku-text-file-ops/index.json",
+    "skills/igapyon-miku-text-file-ops/lib/runtime-artifacts.mjs",
+    "skills/igapyon-miku-text-file-ops/lib/run-miku-text-file-ops.mjs",
+    `skills/igapyon-miku-text-file-ops/runtime/${runtime.name}`,
+    "skills/igapyon-miku-text-file-ops/licenses/LICENSE",
+    "skills/igapyon-miku-text-file-ops/licenses/UNICODE-LICENSE.txt"
   ]) {
     assert.ok(entries.includes(required), `missing zip entry: ${required}`);
   }
   assert.equal(
     entries.filter((entry) =>
-      /^skills\/miku-text-file-ops\/runtime\/miku-text-file-ops-[0-9.]+\.mjs$/.test(entry)
+      /^skills\/igapyon-miku-text-file-ops\/runtime\/miku-text-file-ops-[0-9.]+\.mjs$/.test(entry)
     ).length,
     1
+  );
+  assert.equal(
+    entries.some((entry) => entry.startsWith("skills/miku-text-file-ops/")),
+    false
   );
   assert.equal(entries.some((entry) => entry.includes("-runtime-")), false);
   assert.equal(entries.some((entry) => entry.startsWith("tests/")), false);
@@ -51,11 +58,11 @@ test("isolated extracted bundle runs runtime metadata through its launcher", () 
     execFileSync("unzip", ["-q", zipPath, "-d", temporaryRoot]);
     const launcher = path.resolve(
       temporaryRoot,
-      "skills/miku-text-file-ops/lib/run-miku-text-file-ops.mjs"
+      "skills/igapyon-miku-text-file-ops/lib/run-miku-text-file-ops.mjs"
     );
     assert.equal(
       execFileSync(process.execPath, [launcher, "--version"], { encoding: "utf8" }),
-      `${packageJson.version}\n`
+      `${runtime.version}\n`
     );
     const help = execFileSync(
       process.execPath,
@@ -79,7 +86,7 @@ test("isolated extracted bundle preserves a Windows-31J mutation workflow", () =
     execFileSync("unzip", ["-q", zipPath, "-d", temporaryRoot]);
     const launcher = path.resolve(
       temporaryRoot,
-      "skills/miku-text-file-ops/lib/run-miku-text-file-ops.mjs"
+      "skills/igapyon-miku-text-file-ops/lib/run-miku-text-file-ops.mjs"
     );
     const workspace = path.resolve(temporaryRoot, "workspace");
     fs.mkdirSync(path.resolve(workspace, ".mikusoft"), { recursive: true });

@@ -5,8 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { resolveRuntimeArtifact } from "../skills/miku-text-file-ops/lib/runtime-artifacts.mjs";
-import { runMikuTextFileOps } from "../skills/miku-text-file-ops/lib/run-miku-text-file-ops.mjs";
+import { resolveRuntimeArtifact } from "../skills/igapyon-miku-text-file-ops/lib/runtime-artifacts.mjs";
+import { runMikuTextFileOps } from "../skills/igapyon-miku-text-file-ops/lib/run-miku-text-file-ops.mjs";
 
 test("resolver selects newest standalone CLI and excludes importable runtime", () => {
   const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "miku-text-file-ops-"));
@@ -48,14 +48,18 @@ test("bundled runtime exposes version and help metadata", () => {
   assert.match(help.stdout, /COMMAND is exactly one of: search, read, create, update, delete/);
 });
 
-test("package version matches the bundled runtime version", () => {
+test("package and bundled runtime versions follow the patch-drift policy", () => {
   const packageJson = JSON.parse(
     fs.readFileSync(path.resolve(process.cwd(), "package.json"), "utf8")
   );
   const version = runMikuTextFileOps({ args: ["--version"] });
   assert.equal(version.status, 0);
   assert.equal(version.stderr, "");
-  assert.equal(version.stdout, `${packageJson.version}\n`);
+  const packageParts = packageJson.version.split(".").map(Number);
+  const runtimeParts = version.stdout.trim().split(".").map(Number);
+  assert.deepEqual(packageParts.slice(0, 2), runtimeParts.slice(0, 2));
+  assert.deepEqual(packageParts, [0, 4, 2]);
+  assert.deepEqual(runtimeParts, [0, 4, 1]);
 });
 
 test("bundled runtime digest and size match the accepted upstream asset", () => {
@@ -146,7 +150,7 @@ test("launcher supports range-first reads for known and unknown match lines", ()
     pattern: "projection",
     syntax: "literal",
     projection: "matches",
-    include: ["skills/miku-text-file-ops/SKILL.md"]
+    include: ["skills/igapyon-miku-text-file-ops/SKILL.md"]
   });
   const match = search.results.find((record) => record.type === "match");
   assert.ok(match);
@@ -169,7 +173,7 @@ test("launcher supports range-first reads for known and unknown match lines", ()
 
   const { result: initialResult, response: initial } = runJson("read", {
     items: [{
-      path: "skills/miku-text-file-ops/SKILL.md",
+      path: "skills/igapyon-miku-text-file-ops/SKILL.md",
       firstLines: 120
     }]
   });
@@ -198,7 +202,7 @@ test("launcher preserves actionable partial search and read results", () => {
 
   const { result: readResult, response: read } = runJson("read", {
     items: [{
-      path: "skills/miku-text-file-ops/SKILL.md",
+      path: "skills/igapyon-miku-text-file-ops/SKILL.md",
       range: { startLine: 1, endLine: 20 }
     }],
     limits: {
@@ -239,7 +243,7 @@ test("partial count remains a lower bound instead of a false exact total", () =>
 test("partial multi-item read exposes a suffix-only resubmission point", () => {
   const items = [
     { path: "README.md", firstLines: 1 },
-    { path: "skills/miku-text-file-ops/SKILL.md", firstLines: 1 }
+    { path: "skills/igapyon-miku-text-file-ops/SKILL.md", firstLines: 1 }
   ];
   const { result, response } = runJson("read", {
     items,

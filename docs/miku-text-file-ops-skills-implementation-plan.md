@@ -4,8 +4,9 @@
 
 Validated implementation plan.
 
-Checked on 2026-07-29 against the current local documentation under
-`miku-text-file-ops/docs/`.
+Checked on 2026-07-30 against the current local documentation under
+`miku-text-file-ops/docs/` and the current miku-soft Agent Skills naming
+convention.
 
 This document plans work in the `miku-text-file-ops-skills` repository. It does
 not change the product semantics owned by the upstream `miku-text-file-ops`
@@ -20,7 +21,9 @@ The plan is consistent with the upstream specification and accepted Agent Skill
 integration design after these clarifications:
 
 - Keep the Agent Skill package version and bundled product runtime version
-  identical as the default release-versioning rule.
+  identical by default. Require their major and minor components to match, but
+  allow the patch component to differ for a Skill-only bug fix that does not
+  require a new upstream CLI artifact.
 - Verify the product runtime version with artifact provenance and `--version`;
   never infer it only from the Agent Skill package version.
 - If the declared CLI artifact is missing or unusable, stop with a hard runtime
@@ -102,26 +105,30 @@ Use these names:
 
 - repository: `miku-text-file-ops-skills`
 - npm orchestration package: `miku-text-file-ops-skills`
-- Agent Skill frontmatter name: `miku-text-file-ops`
-- installed Skill directory: `skills/miku-text-file-ops/`
+- Agent Skill frontmatter name: `igapyon-miku-text-file-ops`
+- installed Skill directory: `skills/igapyon-miku-text-file-ops/`
 - upstream CLI artifact:
-  `skills/miku-text-file-ops/runtime/miku-text-file-ops-<product-version>.mjs`
+  `skills/igapyon-miku-text-file-ops/runtime/miku-text-file-ops-<product-version>.mjs`
 - release ZIP:
   `igapyon-miku-text-file-ops-skills-<skill-package-version>.zip`
 
-The accepted upstream Agent Skill design explicitly recommends
-`name: miku-text-file-ops`. That product-specific decision takes precedence
-over the newer general convention that sometimes adds an `igapyon-` prefix to
-an installed Skill name.
+The formal installed Skill identity follows the miku-soft Agent Skills naming
+convention and uses the `igapyon-` prefix. The product name, CLI name,
+repository name, npm orchestration package, runtime artifact names, and
+release ZIP name remain unchanged. `miku-text-file-ops` and
+`miku-text-file-ops-skills` remain compatibility triggers without creating
+additional Skill identities or directories.
 
 Maintain two explicit version records:
 
 - `skillPackageVersion`: the version in this repository's `package.json`
 - `bundledProductVersion`: the version reported by the received upstream CLI
 
-As the repository's release-versioning rule, these versions are identical.
-Verify both records independently so that accidental drift fails before
-release.
+As the repository's default release-versioning rule, these versions are
+identical. Their major and minor components must match. The patch component
+may differ for a Skill-only bug fix that does not require a new upstream CLI
+artifact. Verify both records independently so that accidental major/minor
+drift fails before release.
 
 The upstream package and CLI bundle currently target Node.js 22. Set this
 repository's installed runtime requirement to Node.js `>=22`, verify Node.js 22
@@ -151,7 +158,7 @@ scripts/
   build-skill-bundle.mjs
   build-skill-bundle-zip.mjs
 skills/
-  miku-text-file-ops/
+  igapyon-miku-text-file-ops/
     SKILL.md
     index.json
     agents/
@@ -188,7 +195,7 @@ installed Skill metadata.
 2. Accept only the reviewed Release asset for the version selected by the
    Skills package; the current accepted version is `v0.4.1`.
 3. Have a human place the standalone CLI release asset under
-   `skills/miku-text-file-ops/runtime/`.
+   `skills/igapyon-miku-text-file-ops/runtime/`.
 4. Record the original asset URL, release tag, commit, received filename,
    received date, file size, and SHA-256 in `docs/upstream-runtime.md`.
 5. Verify that `--version` and `--help`:
@@ -233,7 +240,7 @@ wholesale or import their product logic.
 
 ### Phase 2: Implement the Thin Runtime Adapter
 
-Implement `skills/miku-text-file-ops/lib/runtime-artifacts.mjs` to:
+Implement `skills/igapyon-miku-text-file-ops/lib/runtime-artifacts.mjs` to:
 
 - resolve artifacts relative to the installed Skill directory rather than the
   caller's current directory
@@ -243,7 +250,7 @@ Implement `skills/miku-text-file-ops/lib/runtime-artifacts.mjs` to:
 - select versioned artifacts deterministically
 - fail clearly when no valid artifact exists
 
-Implement `skills/miku-text-file-ops/lib/cli-runner.mjs` to:
+Implement `skills/igapyon-miku-text-file-ops/lib/cli-runner.mjs` to:
 
 - invoke Node.js with the resolved standalone CLI
 - pass `--root`, `--json`, and one of the five operation commands unchanged
@@ -375,7 +382,7 @@ npm run build:bundle:zip
 
 The installable directory and ZIP must contain:
 
-- `skills/miku-text-file-ops/SKILL.md`
+- `skills/igapyon-miku-text-file-ops/SKILL.md`
 - generated `index.json`
 - required references
 - required helper files
@@ -409,7 +416,8 @@ The upstream workflow explicitly does not create or update an Agent Skill.
 
 ### Phase 7: Generate Discovery Metadata and Finish Documentation
 
-1. Generate `skills/miku-text-file-ops/index.json` with `miku-indexgen`.
+1. Generate `skills/igapyon-miku-text-file-ops/index.json` with
+   `miku-indexgen`.
 2. Never hand-edit generated `index.json`.
 3. Regenerate it after changing bundled Markdown, JSON, helper, or runtime
    files.
@@ -426,7 +434,9 @@ Use raw task prompts with Codex and, where practical, Qwen Code.
 
 The golden prompt set must cover:
 
-- explicit `miku-text-file-ops` invocation
+- explicit `igapyon-miku-text-file-ops` invocation
+- compatibility invocation through `miku-text-file-ops` or
+  `miku-text-file-ops-skills`
 - Windows-31J preservation
 - mixed-encoding search
 - BOM and newline preservation
@@ -464,7 +474,8 @@ The initial repository is ready when:
 
 - the upstream repository URL, tag, commit, artifact, SHA-256, and product
   version are pinned
-- the Skill package version matches the bundled product runtime version
+- the Skill package and bundled product runtime major/minor versions match,
+  with any patch-only difference documented as a Skill-only bug fix
 - the standalone CLI is the only bundled execution artifact
 - `SKILL.md` has the accepted trigger and non-trigger boundary
 - the Skill does not duplicate core semantics

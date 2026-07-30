@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 
 const root = process.cwd();
-const skillRoot = path.resolve(root, "skills/miku-text-file-ops");
+const skillRoot = path.resolve(root, "skills/igapyon-miku-text-file-ops");
 const corpus = JSON.parse(fs.readFileSync(
   path.resolve(root, "tests/fixtures/agent-routing-v1.json"),
   "utf8"

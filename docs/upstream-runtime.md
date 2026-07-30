@@ -12,16 +12,17 @@ upstream `miku-text-file-ops` GitHub Release.
 | Release URL | `https://github.com/igapyon/miku-text-file-ops/releases/tag/v0.4.1` |
 | Upstream commit | `4f4d715c549984ded23d0d3b105077e01fb384ac` |
 | Asset | `miku-text-file-ops-0.4.1.mjs` |
-| Received path | `skills/miku-text-file-ops/runtime/miku-text-file-ops-0.4.1.mjs` |
+| Received path | `skills/igapyon-miku-text-file-ops/runtime/miku-text-file-ops-0.4.1.mjs` |
 | Received date | 2026-07-30 |
 | Size | 718307 bytes |
 | SHA-256 | `af5c3c80eb48e1e8890e439015fd177d242b50e5af87d24b73d0dda5f7c7ef73` |
 | Reported version | `0.4.1` |
 
-As the release-versioning rule, the Agent Skill package version must match the
-bundled upstream runtime version. Verify the runtime independently from its
-artifact provenance and `--version`; do not assume that matching package
-metadata proves the bundled artifact version.
+As the default release-versioning rule, the Agent Skill package version
+matches the bundled upstream runtime version. Their major and minor components
+must match, but the patch component may differ for a Skill-only bug fix that
+does not require a new upstream CLI artifact. Verify both versions
+independently from package metadata, artifact provenance, and `--version`.
 
 ## First-Execution History
 
@@ -44,9 +45,9 @@ received or executed. The source archive is not a runtime artifact.
 Verify every received replacement before wiring or release:
 
 ```bash
-shasum -a 256 skills/miku-text-file-ops/runtime/miku-text-file-ops-<version>.mjs
-node skills/miku-text-file-ops/runtime/miku-text-file-ops-<version>.mjs --version
-node skills/miku-text-file-ops/runtime/miku-text-file-ops-<version>.mjs --help
+shasum -a 256 skills/igapyon-miku-text-file-ops/runtime/miku-text-file-ops-<version>.mjs
+node skills/igapyon-miku-text-file-ops/runtime/miku-text-file-ops-<version>.mjs --version
+node skills/igapyon-miku-text-file-ops/runtime/miku-text-file-ops-<version>.mjs --help
 ```
 
 Update this document with the new Release, asset, size, digest, received date,

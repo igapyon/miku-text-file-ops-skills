@@ -3,8 +3,11 @@
 Agent Skills package for encoding-aware local text-file operations through the
 bundled `miku-text-file-ops` standalone CLI.
 
-The canonical Skill source is under `skills/miku-text-file-ops/`. The package
-is a thin CLI-backed adapter; decoding, encoding, search, patch, revision, and
+The canonical Skill source is under
+`skills/igapyon-miku-text-file-ops/`. Its formal Agent Skill identity is
+`igapyon-miku-text-file-ops`; `miku-text-file-ops` and
+`miku-text-file-ops-skills` remain compatibility triggers. The package is a
+thin CLI-backed adapter; decoding, encoding, search, patch, revision, and
 result semantics remain in the upstream runtime.
 
 ## Requirements
@@ -30,19 +33,30 @@ bundle/igapyon-miku-text-file-ops-skills-<package-version>.zip
 ## Runtime
 
 The received standalone CLI lives under
-`skills/miku-text-file-ops/runtime/`. See
+`skills/igapyon-miku-text-file-ops/runtime/`. See
 [`docs/upstream-runtime.md`](docs/upstream-runtime.md) for its provenance and
 verification record.
 
 As the default release-versioning rule, the package version and bundled
-upstream CLI version are identical.
+upstream CLI version are identical. Their major and minor components must
+match, but the patch component may differ for a Skill-only bug fix that does
+not require a new upstream CLI artifact.
 
 ## Repository Operation
 
-- `skills/miku-text-file-ops/` is the canonical installable source.
+- `skills/igapyon-miku-text-file-ops/` is the only canonical installable
+  source.
 - `index.json` is generated with `miku-indexgen`; do not edit it manually.
 - `workplace/` is local scratch space; only `.gitkeep` is tracked.
 - `.codex/skills/`, `bundle/`, `release-assets/`, and dependencies are ignored.
 - GitHub PRs, tags, and Releases are human-operated.
 
 Developer documents are under [`docs/`](docs/).
+
+## Migration from the Former Skill Name
+
+Existing installations should remove the former
+`skills/miku-text-file-ops/` installation and deploy
+`skills/igapyon-miku-text-file-ops/` in its place. Do not keep both
+directories installed: they are compatibility names for one Skill, not
+separate Skill identities.

@@ -3,10 +3,10 @@
 ## Scope
 
 On 2026-07-30, fresh Codex subagent threads received raw user tasks with access
-to the installable `skills/miku-text-file-ops/` directory. They were told not
-to inspect repository tests or developer documents. Positive data-operation
-cases used an isolated mixed UTF-8 and Windows-31J workspace under
-`/private/tmp`; repository files were not mutated.
+to the installable `skills/igapyon-miku-text-file-ops/` directory. They were
+told not to inspect repository tests or developer documents. Positive
+data-operation cases used an isolated mixed UTF-8 and Windows-31J workspace
+under `/private/tmp`; repository files were not mutated.
 
 The reusable golden inputs are recorded in
 `tests/fixtures/agent-routing-v1.json`. Deterministic contract tests validate
