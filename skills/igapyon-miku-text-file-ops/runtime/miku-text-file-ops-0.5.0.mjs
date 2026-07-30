@@ -7998,10 +7998,14 @@ function validateReadRequest(value) {
     effectiveLimits
   };
 }
-function validateCreateRequest(value) {
+function validateCreateRequest(value, defaults = {
+  encoding: "utf-8",
+  lineEnding: "lf",
+  bom: false
+}) {
   const object = requireObject(value);
   rejectUnknownFields(object, /* @__PURE__ */ new Set(["path", "content", "writeAs"]));
-  const writeAs = validateCreateWriteAs(object["writeAs"]);
+  const writeAs = validateCreateWriteAs(object["writeAs"], defaults);
   return {
     path: validateWorkspacePath(object["path"], "path", true),
     content: requiredString(object["content"], "content"),
@@ -8085,16 +8089,16 @@ function validateReadItem(value, index) {
     selector
   };
 }
-function validateCreateWriteAs(value) {
+function validateCreateWriteAs(value, defaults) {
   if (value === void 0) {
-    return { encoding: "utf-8", lineEnding: "lf", bom: false };
+    return { ...defaults };
   }
   const object = requireObject(value, "writeAs");
   rejectUnknownFields(object, /* @__PURE__ */ new Set(["encoding", "lineEnding", "bom"]), "writeAs");
   return {
-    encoding: optionalEnum(object["encoding"], "writeAs.encoding", ENCODINGS, "utf-8"),
-    lineEnding: optionalEnum(object["lineEnding"], "writeAs.lineEnding", /* @__PURE__ */ new Set(["lf", "crlf", "cr"]), "lf"),
-    bom: optionalBoolean(object["bom"], "writeAs.bom", false)
+    encoding: optionalEnum(object["encoding"], "writeAs.encoding", ENCODINGS, defaults.encoding),
+    lineEnding: optionalEnum(object["lineEnding"], "writeAs.lineEnding", /* @__PURE__ */ new Set(["lf", "crlf", "cr"]), defaults.lineEnding),
+    bom: optionalBoolean(object["bom"], "writeAs.bom", defaults.bom)
   };
 }
 function validateUpdateWriteAs(value) {
@@ -8537,6 +8541,7 @@ function parseRepositoryTextPolicy(value) {
   rejectConfigFields(object, /* @__PURE__ */ new Set([
     "schemaVersion",
     "encodingRules",
+    "defaults",
     "defaultCreate",
     "legacyFallback"
   ]), "configuration");
@@ -8548,11 +8553,14 @@ function parseRepositoryTextPolicy(value) {
     throw configError("encodingRules must be an array");
   }
   const rules = (rulesValue ?? []).map((rule, index) => parseEncodingRule(rule, index));
-  const defaultCreate = object["defaultCreate"] === void 0 ? void 0 : parseCreateDefaults(object["defaultCreate"]);
+  if (object["defaults"] !== void 0 && object["defaultCreate"] !== void 0) {
+    throw configError("defaults and defaultCreate cannot both be supplied");
+  }
+  const defaults = object["defaults"] === void 0 ? object["defaultCreate"] === void 0 ? void 0 : parseCreateDefaults(object["defaultCreate"], "defaultCreate") : parseCreateDefaults(object["defaults"], "defaults");
   const legacyFallback = object["legacyFallback"] === void 0 ? void 0 : object["legacyFallback"] === "windows-31j" ? "windows-31j" : (() => {
     throw configError('legacyFallback must be "windows-31j"');
   })();
-  return buildPolicy(rules, defaultCreate, legacyFallback);
+  return buildPolicy(rules, defaults, legacyFallback);
 }
 function parseEncodingRule(value, index) {
   const field = `encodingRules[${index}]`;
@@ -8566,9 +8574,9 @@ function parseEncodingRule(value, index) {
     throw configError(`${field}.glob is invalid`, error);
   }
 }
-function parseCreateDefaults(value) {
-  const object = configObject(value, "defaultCreate");
-  rejectConfigFields(object, /* @__PURE__ */ new Set(["encoding", "lineEnding", "bom"]), "defaultCreate");
+function parseCreateDefaults(value, field) {
+  const object = configObject(value, field);
+  rejectConfigFields(object, /* @__PURE__ */ new Set(["encoding", "lineEnding", "bom"]), field);
   try {
     return validateCreateRequest({
       path: "placeholder",
@@ -8576,13 +8584,14 @@ function parseCreateDefaults(value) {
       writeAs: object
     }).writeAs;
   } catch (error) {
-    throw configError("defaultCreate is invalid", error);
+    throw configError(`${field} is invalid`, error);
   }
 }
-function buildPolicy(rules, defaultCreate, legacyFallback) {
+function buildPolicy(rules, defaults, legacyFallback) {
   return {
     encodingRules: rules.map(({ glob, encoding }) => ({ glob, encoding })),
-    defaultCreate,
+    defaults,
+    defaultCreate: defaults,
     legacyFallback,
     repositoryEncoding: (path) => rules.find((rule) => requestGlobMatches(rule.compiled, path))?.encoding
   };
@@ -9046,14 +9055,24 @@ function buildDecodedFile(bytes, text, encoding, encodingSource, bom) {
 // dist/src/core/mutate.js
 var MutationError = class extends Error {
   code;
-  constructor(code, message) {
+  path;
+  details;
+  constructor(code, message, options = {}) {
     super(message);
     this.name = "MutationError";
     this.code = code;
+    this.path = options.path;
+    this.details = options.details;
   }
 };
-async function executeCreate(workspace, input) {
-  const request = validateCreateRequest(input);
+async function executeCreate(workspace, input, options = {}) {
+  const preliminary = validateCreateRequest(input);
+  const defaults = {
+    encoding: options.repositoryEncoding?.(preliminary.path) ?? options.defaults?.encoding ?? "utf-8",
+    lineEnding: options.defaults?.lineEnding ?? "lf",
+    bom: options.defaults?.bom ?? false
+  };
+  const request = validateCreateRequest(input, defaults);
   const target = await workspace.resolveCreateTarget(request.path);
   const formatted = normalizeLineEndings(request.content, request.writeAs.lineEnding);
   const bytes = encodeWithBom(formatted, request.writeAs.encoding, request.writeAs.bom);
@@ -9064,7 +9083,9 @@ async function executeCreate(workspace, input) {
     await handle.sync();
   } catch (error) {
     if (isNodeCode(error, "EEXIST")) {
-      throw new MutationError("target_exists", "Create target already exists");
+      throw new MutationError("target_exists", "Create target already exists", {
+        path: request.path
+      });
     }
     throw error;
   } finally {
@@ -9084,7 +9105,7 @@ async function executeUpdate(workspace, input, options = {}) {
   const target = await workspace.resolveExistingFile(request.path);
   const originalBytes = await readFile3(target);
   const oldRevision = rawByteRevision(originalBytes);
-  assertRevision(request.expectedRevision, oldRevision);
+  assertRevision(request.expectedRevision, oldRevision, request.path);
   const repositoryEncoding = options.repositoryEncoding?.(request.path);
   const decoded = decodeTextFile(originalBytes, {
     ...repositoryEncoding === void 0 ? {} : { repositoryEncoding },
@@ -9095,17 +9116,18 @@ async function executeUpdate(workspace, input, options = {}) {
   let addedLines = 0;
   let removedLines = 0;
   let appliedContextDiff;
+  const originalLogical = parseLogicalText(decoded.text);
+  const effectiveLineEnding = request.writeAs.lineEnding === "preserve" && originalLogical.lineEnding === "none" && options.defaults !== void 0 ? options.defaults.lineEnding : request.writeAs.lineEnding;
   if (request.change.type === "context-diff") {
-    const applied = applyContextDiffWithSources(decoded.text, request.change.diff, request.writeAs.lineEnding);
+    const applied = applyContextDiffWithSources(decoded.text, request.change.diff, effectiveLineEnding);
     appliedContextDiff = applied;
     resultText = applied.text;
     appliedHunks = applied.hunksApplied;
     addedLines = applied.linesAdded;
     removedLines = applied.linesRemoved;
   } else if (request.change.type === "replace") {
-    const originalLogical = parseLogicalText(decoded.text);
     const replacementLogical = parseLogicalText(request.change.content);
-    resultText = formatReplacement(originalLogical, replacementLogical, request.writeAs.lineEnding);
+    resultText = formatReplacement(originalLogical, replacementLogical, effectiveLineEnding);
     addedLines = replacementLogical.lines.length;
     removedLines = originalLogical.lines.length;
   } else if (request.writeAs.lineEnding !== "preserve") {
@@ -9115,7 +9137,7 @@ async function executeUpdate(workspace, input, options = {}) {
   const bom = request.writeAs.bom === "preserve" ? decoded.bom : request.writeAs.bom;
   const newBytes = appliedContextDiff !== void 0 && request.writeAs.encoding === "preserve" && request.writeAs.lineEnding === "preserve" ? encodeContextDiffPreservingSourceBytes(originalBytes, decoded, appliedContextDiff, bom) : encodeWithBom(resultText, encoding, bom);
   const status = await lstat2(target);
-  await atomicRevisionGuardedReplace(target, request.expectedRevision, newBytes, status.mode);
+  await atomicRevisionGuardedReplace(target, request.expectedRevision, newBytes, status.mode, request.path, options.beforeFinalRevisionCheck);
   return {
     path: request.path,
     oldRevision,
@@ -9129,14 +9151,15 @@ async function executeUpdate(workspace, input, options = {}) {
     writtenBytes: newBytes.byteLength
   };
 }
-async function executeDelete(workspace, input) {
+async function executeDelete(workspace, input, options = {}) {
   const request = validateDeleteRequest(input);
   const target = await workspace.resolveExistingFile(request.path);
   const observed = await readFile3(target);
   const oldRevision = rawByteRevision(observed);
-  assertRevision(request.expectedRevision, oldRevision);
+  assertRevision(request.expectedRevision, oldRevision, request.path);
+  await options.beforeFinalRevisionCheck?.();
   const rechecked = await readFile3(target);
-  assertRevision(request.expectedRevision, rawByteRevision(rechecked));
+  assertRevision(request.expectedRevision, rawByteRevision(rechecked), request.path);
   await unlink(target);
   return { path: request.path, oldRevision };
 }
@@ -9238,7 +9261,7 @@ function dominantNewline2(newlines) {
   const maximum = Math.max(...counts.values());
   return newlines.find((newline) => counts.get(newline) === maximum) ?? "\n";
 }
-async function atomicRevisionGuardedReplace(target, expectedRevision, bytes, mode) {
+async function atomicRevisionGuardedReplace(target, expectedRevision, bytes, mode, path, beforeFinalRevisionCheck) {
   const temporary = join2(dirname(target), `.${basename2(target)}.miku-text-file-ops-${process.pid}-${randomUUID()}.tmp`);
   let handle;
   let renamed = false;
@@ -9249,8 +9272,9 @@ async function atomicRevisionGuardedReplace(target, expectedRevision, bytes, mod
     await handle.close();
     handle = void 0;
     await chmod(temporary, mode & 4095);
+    await beforeFinalRevisionCheck?.();
     const rechecked = await readFile3(target);
-    assertRevision(expectedRevision, rawByteRevision(rechecked));
+    assertRevision(expectedRevision, rawByteRevision(rechecked), path);
     await rename(temporary, target);
     renamed = true;
   } finally {
@@ -9266,9 +9290,17 @@ async function atomicRevisionGuardedReplace(target, expectedRevision, bytes, mod
     }
   }
 }
-function assertRevision(expected, actual) {
+function assertRevision(expected, actual, path) {
   if (expected !== actual) {
-    throw new MutationError("stale_revision", `Expected revision ${expected}, observed ${actual}`);
+    throw new MutationError("stale_revision", "The file changed after it was read. Read it again and rebuild the mutation request; do not retry the unchanged request.", {
+      path,
+      details: {
+        expectedRevision: expected,
+        actualRevision: actual,
+        recovery: "reread_and_rebuild_request",
+        retryUnchangedRequest: false
+      }
+    });
   }
 }
 function newlineSequence(lineEnding) {
@@ -10159,7 +10191,7 @@ function compareUnicodeScalars4(left, right) {
 
 // dist/src/metadata.js
 var PRODUCT_NAME = "miku-text-file-ops";
-var PRODUCT_VERSION = "0.4.1";
+var PRODUCT_VERSION = "0.5.0";
 
 // dist/src/help.js
 var EXAMPLE_REVISION = `sha256:${"0".repeat(64)}`;
@@ -10217,7 +10249,7 @@ var DELETE_EXAMPLE = {
 function renderHelp() {
   return [
     `${PRODUCT_NAME} ${PRODUCT_VERSION}`,
-    "Encoding-aware, bounded text-file operations for AI agents.",
+    "Bounded text-file operations for AI agents, supporting Windows-31J and UTF encodings.",
     "",
     "USAGE",
     `  ${PRODUCT_NAME} [--root PATH] [--json] COMMAND < request.json`,
@@ -10234,6 +10266,8 @@ function renderHelp() {
     "TRANSPORT AND PATH RULES",
     "  COMMAND is exactly one of: search, read, create, update, delete.",
     "  Supply exactly one UTF-8 JSON object on stdin, without a BOM.",
+    "  Keep request JSON in a UTF-8 no-BOM file and redirect it to stdin when",
+    "  shell quoting or command-line length is a concern, especially on Windows.",
     "  Unknown JSON fields are errors. Multiline strings use JSON escapes such as \\n.",
     "  Paths are workspace-relative, use /, and cannot contain empty, . or .. segments.",
     "  Mutations cannot target .git, follow symlinks, or create parent directories.",
@@ -10273,7 +10307,8 @@ function renderHelp() {
     ...requestExample("create", CREATE_EXAMPLE),
     "  Creates new.txt only when absent; it never overwrites.",
     "  Parent directories must already exist. writeAs is optional.",
-    "  Defaults: encoding:utf-8, lineEnding:lf, bom:false.",
+    "  Defaults: explicit writeAs, then matching repository encodingRules, then",
+    "  repository defaults, then encoding:utf-8, lineEnding:lf, bom:false.",
     "  encoding: utf-8 | utf-16le | utf-16be | windows-31j.",
     "  lineEnding: lf | crlf | cr. bom is boolean.",
     "",
@@ -10282,6 +10317,9 @@ function renderHelp() {
     "  Replace the all-zero example expectedRevision with revision from read.",
     "  A successful update returns newRevision; use it as expectedRevision for",
     "  the next update or delete.",
+    "  expectedRevision is an optimistic-concurrency token over the complete raw",
+    "  file bytes. Do not modify the target through another tool between read and",
+    "  update; any intervening byte change causes stale_revision.",
     "  change is exactly one of:",
     '    {"type":"context-diff","diff":"..."}  recommended for agent edits',
     '    {"type":"replace","content":"..."}     explicit whole-file replacement',
@@ -10297,6 +10335,8 @@ function renderHelp() {
     "    With lineEnding:preserve, a uniform original newline is reused; mixed",
     "    newlines are reused by logical-line position, then the dominant original",
     "    newline is used (first-seen breaks ties), with LF if none existed.",
+    "    A repository defaults.lineEnding replaces that LF fallback when the",
+    "    original file contains no observable newline.",
     "  writeAs defaults to preserve. encoding accepts preserve or a CREATE encoding;",
     "  lineEnding accepts preserve | lf | crlf | cr; bom accepts preserve | boolean.",
     "  Explicit lineEnding lf/crlf/cr normalizes every result separator.",
@@ -10305,6 +10345,8 @@ function renderHelp() {
     ...requestExample("delete", DELETE_EXAMPLE),
     "  Replace the all-zero example expectedRevision with revision from read or",
     "  newRevision from update. Deletes one regular file; never recursive.",
+    "  Do not modify the target through another tool between read and delete.",
+    "  Any intervening byte change causes stale_revision and leaves it undeleted.",
     "",
     "OPTIONAL LIMITS (agent-v1 defaults)",
     "  maxResultBytes:32768, maxTextCharsReturned:16384, maxDiagnostics:50,",
@@ -10337,7 +10379,12 @@ function renderHelp() {
     "  1. search with a narrow projection or bounded limits.",
     "  2. read the required ranges and retain each returned revision.",
     "  3. update/delete using that revision; prefer context-diff for edits.",
-    "  4. On stale_revision, read again and rebuild the request; do not retry blindly.",
+    "  4. On stale_revision, never retry the unchanged request. Read the target",
+    "     again, review the latest content, and rebuild the mutation request.",
+    "",
+    "REFERENCES",
+    "  docs/specification.md",
+    "  docs/cli-invocation.md",
     ""
   ].join("\n");
 }
@@ -10498,6 +10545,7 @@ async function dispatch(operation, workspace, request, policy) {
   const coreOptions = {
     repositoryEncoding: policy.repositoryEncoding,
     limitCeilings: AGENT_V1_LIMITS,
+    ...policy.defaults === void 0 ? {} : { defaults: policy.defaults },
     ...policy.legacyFallback === void 0 ? {} : { legacyFallback: policy.legacyFallback }
   };
   switch (operation) {
@@ -10506,7 +10554,7 @@ async function dispatch(operation, workspace, request, policy) {
     case "read":
       return executeRead(workspace, request, coreOptions);
     case "create": {
-      const result = await executeCreate(workspace, request);
+      const result = await executeCreate(workspace, request, coreOptions);
       return mutationEnvelope(operation, { type: operation, ...result });
     }
     case "update": {
@@ -10686,11 +10734,13 @@ function diagnosticFromError(error) {
   }
   if (typeof error === "object" && error !== null && "code" in error && typeof error.code === "string") {
     const path = "path" in error && typeof error.path === "string" ? error.path : void 0;
+    const details = "details" in error && typeof error.details === "object" && error.details !== null && !Array.isArray(error.details) ? error.details : void 0;
     return {
       severity: "error",
       code: stableRuntimeCode(error.code),
       message: error instanceof Error ? error.message : String(error),
-      ...path === void 0 ? {} : { path }
+      ...path === void 0 ? {} : { path },
+      ...details === void 0 ? {} : { details }
     };
   }
   return {

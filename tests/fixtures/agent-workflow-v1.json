@@ -1,0 +1,104 @@
+{
+  "formatVersion": 1,
+  "executionScenarios": [
+    {
+      "id": "closed-bundled-runtime",
+      "installedSkillRoot": "/opt/skills/igapyon-miku-text-file-ops",
+      "projectRoot": "/work/project",
+      "expectedLauncher": "/opt/skills/igapyon-miku-text-file-ops/lib/run-miku-text-file-ops.mjs",
+      "expectedInput": "utf8-no-bom-temporary-file-stdin",
+      "expectedOutput": "canonical-json-stdout",
+      "temporaryLocations": [
+        "project-local-when-workspace-only",
+        "host-secure-temp-when-preauthorized"
+      ],
+      "projectLocalPath": "project-root/workplace/tmp/miku-text-file-ops",
+      "projectLocalRequirements": [
+        "ignored-or-search-excluded",
+        "not-staged",
+        "collision-resistant-name",
+        "exact-path-cleanup"
+      ],
+      "forbiddenDiscovery": [
+        "npx",
+        "npm-install",
+        "bare-path-cli",
+        "registry-search",
+        "network-download"
+      ],
+      "missingRuntimeAction": "hard-error"
+    },
+    {
+      "id": "control-json-target-encoding-boundary",
+      "requestEncoding": "utf-8-no-bom",
+      "targetEncoding": "windows-31j",
+      "harnessConvertsTarget": false,
+      "expectedBundledCli": true
+    }
+  ],
+  "continuityScenarios": [
+    {
+      "id": "windows31j-java-read-update",
+      "establishedRule": "**/*.java=windows-31j",
+      "steps": ["read:src/Main.java", "update:src/Main.java"],
+      "expectedScope": "continue",
+      "expectedBundledCli": true
+    },
+    {
+      "id": "test-failure-follow-up",
+      "establishedRule": "**/*.java=windows-31j",
+      "steps": ["update:src/Main.java", "test:failed", "update:src/Main.java"],
+      "expectedScope": "continue",
+      "expectedBundledCli": true
+    },
+    {
+      "id": "same-rule-second-file",
+      "establishedRule": "**/*.jsp=windows-31j",
+      "steps": ["read:web/a.jsp", "update:web/b.jsp"],
+      "expectedScope": "continue",
+      "expectedBundledCli": true
+    },
+    {
+      "id": "ordinary-utf8-outside-scope",
+      "establishedRule": "**/*.java=windows-31j",
+      "steps": ["read:src/Main.java", "update:README.md"],
+      "expectedScope": "outside",
+      "expectedBundledCli": false,
+      "expectedNativeTools": true
+    },
+    {
+      "id": "stale-safe-rebuild",
+      "steps": ["read:r1", "update:stale", "reread:r2", "compare:safe", "rebuild:r2"],
+      "expectedScope": "continue",
+      "expectedBundledCli": true,
+      "retryUnchangedRequest": false
+    },
+    {
+      "id": "stale-overlap-user-decision",
+      "steps": ["read:r1", "update:stale", "reread:r2", "compare:overlap"],
+      "expectedScope": "continue",
+      "expectedAction": "ask-user",
+      "mutationAfterConflict": false
+    },
+    {
+      "id": "policy-change",
+      "steps": ["read:windows-31j", "policy:changed"],
+      "expectedScope": "re-evaluate",
+      "expectedAction": "confirm-policy"
+    },
+    {
+      "id": "fresh-thread-no-invisible-state",
+      "priorActivationVisible": false,
+      "durableRepositoryInstruction": false,
+      "expectedScope": "unknown",
+      "assumePriorActivation": false
+    },
+    {
+      "id": "fresh-thread-durable-instruction",
+      "priorActivationVisible": false,
+      "durableRepositoryInstruction": true,
+      "expectedScope": "re-establish",
+      "expectedBundledCli": true
+    }
+  ]
+}

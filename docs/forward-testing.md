@@ -17,7 +17,7 @@ independent agent observations; it is not loaded by the installed Skill.
 
 | Raw-task class | Observation |
 | --- | --- |
-| Broad mixed-encoding `ERROR` search | Selected the Skill, checked bundled CLI `0.4.1`, ran `summary` before `files`, returned no match text, and reported complete exact counts. |
+| Broad mixed-encoding `ERROR` search | Selected the Skill, checked bundled CLI `0.5.0`, ran `summary` before `files`, returned no match text, and reported complete exact counts. |
 | Windows-31J revision-guarded update | Selected the Skill, used bounded `firstLines: 120`, handed the read revision to one context-diff update, and preserved Windows-31J, CRLF, no BOM, and the final newline. |
 | Ordinary UTF-8 README edit | Rejected the Skill and chose native `rg` followed by the normal patch path. |
 | Ordinary TypeScript analysis | Rejected the Skill and chose native repository and TypeScript analysis tools. |
@@ -26,8 +26,9 @@ independent agent observations; it is not loaded by the installed Skill.
 | PNG metadata | Rejected the Skill as binary-file work. |
 
 Every executed positive case used
-`node lib/run-miku-text-file-ops.mjs --root ... --json <operation>`. Selection
-without launcher execution was not counted as a successful positive result.
+`node <installed-skill-root>/lib/run-miku-text-file-ops.mjs --root ...
+--json <operation>`. Selection without launcher execution was not counted as a
+successful positive result.
 
 ## Observed Context Decisions
 
@@ -55,7 +56,62 @@ zero diagnostics. The update used the read revision as `expectedRevision`; the
 update and verification read both returned exit `0` and preserved the expected
 metadata.
 
+The isolated bundle transport test additionally places its UTF-8 no-BOM request
+under `<project-root>/workplace/tmp/miku-text-file-ops/`, keeps `workplace/`
+ignored, uses the absolute control-file path only for stdin, resolves the target
+relative to `--root`, and removes the exact request file in the same test
+process. This deterministic case covers workspace-only harnesses without
+requiring repeated external-root approval.
+
 Model token counts are intentionally not conformance evidence. The portable
 evidence is the selected operation, projection, selector or range, structured
 status and completeness, effective limits, returned text characters, protocol
 bytes, and revision handoff.
+
+## Observed Post-Selection Workflow
+
+Fresh subagent threads then received only the installable Skill and raw
+post-selection tasks. They did not inspect repository tests or developer
+documents.
+
+### Closed Runtime and Temporary JSON
+
+One thread configured `.java` as Windows-31J and created a 57-line Japanese
+file. It:
+
+- resolved and used the absolute bundled launcher without `npx`, package
+  installation, PATH lookup, registry search, or network download
+- passed a 4,416-byte UTF-8 no-BOM request file through stdin
+- kept JSON stdout and empty stderr in separate files and captured exit `0`
+- read the target again through the same launcher
+- confirmed `encodingSource: "repositoryRule"`, Windows-31J, LF, no BOM, equal
+  content, and equal create/read revisions
+- deleted the exact six request, response, and stderr files plus the isolated
+  project
+
+### Encoding-Sensitive Scope Continuity
+
+A separate thread configured `.java` and `.jsp` as Windows-31J while keeping
+`README.md` as ordinary UTF-8. Initial and follow-up create, read, update, and
+verification operations for both legacy files all used the bundled launcher.
+The repository policy and README used the normal UTF-8 patch path.
+
+Final verification confirmed Windows-31J with no BOM and a final LF for both
+legacy files, strict UTF-8 with no BOM and a final LF for README, and successful
+strict-UTF-8 rejection of the two legacy byte streams. This demonstrated that
+the post-selection scope continued across related files and follow-up edits
+without expanding to the unrelated UTF-8 file.
+
+### Overlapping Revision Conflict
+
+A third thread read a Windows-31J settings file, retained its revision, then
+simulated an intervening change to the same setting before submitting the
+prepared update. The CLI returned exit `3` with structured `stale_revision`,
+different expected and actual revisions,
+`recovery: "reread_and_rebuild_request"`, and
+`retryUnchangedRequest: false`.
+
+The thread reread the file through the bundled launcher, detected that the
+intervening edit overlapped the intended setting, applied no further mutation,
+and produced a bounded user handoff asking whether to retain the external value
+or replace it with the requested value.
