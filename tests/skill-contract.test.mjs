@@ -4,11 +4,26 @@ import path from "node:path";
 import test from "node:test";
 
 const root = process.cwd();
-const skillRoot = path.resolve(root, "skills/miku-text-file-ops");
+const skillRoot = path.resolve(root, "skills/igapyon-miku-text-file-ops");
+
+test("repository exposes one canonical formal Skill identity", () => {
+  assert.equal(fs.existsSync(skillRoot), true);
+  assert.equal(
+    fs.existsSync(path.resolve(root, "skills/miku-text-file-ops")),
+    false
+  );
+
+  const agentMetadata = fs.readFileSync(
+    path.resolve(skillRoot, "agents/openai.yaml"),
+    "utf8"
+  );
+  assert.match(agentMetadata, /\$igapyon-miku-text-file-ops/);
+  assert.doesNotMatch(agentMetadata, /\$miku-text-file-ops\b/);
+});
 
 test("skill contract is narrow and directly routes bundled references", () => {
   const skill = fs.readFileSync(path.resolve(skillRoot, "SKILL.md"), "utf8");
-  assert.match(skill, /^---\nname: miku-text-file-ops\n/m);
+  assert.match(skill, /^---\nname: igapyon-miku-text-file-ops\n/m);
   assert.match(skill, /Do not activate for ordinary UTF-8/);
   assert.match(skill, /references\/runtime\.md/);
   assert.match(skill, /references\/search-read\.md/);
@@ -30,6 +45,7 @@ test("skill metadata covers positive triggers and negative boundaries", () => {
   const description = extractDescription(skill);
 
   for (const expected of [
+    "igapyon-miku-text-file-ops",
     "miku-text-file-ops",
     "miku-text-file-ops-skills",
     "non-UTF-8",

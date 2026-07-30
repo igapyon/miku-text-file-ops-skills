@@ -1,6 +1,6 @@
 ---
-name: miku-text-file-ops
-description: Use when the user explicitly names `miku-text-file-ops` or `miku-text-file-ops-skills`, or when encoding-aware local text operations are required for non-UTF-8 files, mixed encodings, repository encoding rules, Windows-31J, explicit encoding conversion, BOM or newline preservation, mojibake, decode errors, or unexpectedly skipped text files. Run the bundled standalone CLI for search, read, create, update, and delete. Do not activate for ordinary UTF-8 reading, generic source search, routine patching, binary files, or code review.
+name: igapyon-miku-text-file-ops
+description: Use when the user explicitly names `igapyon-miku-text-file-ops`, `miku-text-file-ops`, or `miku-text-file-ops-skills`, or when encoding-aware local text operations are required for non-UTF-8 files, mixed encodings, repository encoding rules, Windows-31J, explicit encoding conversion, BOM or newline preservation, mojibake, decode errors, or unexpectedly skipped text files. Run the bundled standalone CLI for search, read, create, update, and delete. Do not activate for ordinary UTF-8 reading, generic source search, routine patching, binary files, or code review.
 ---
 
 # Miku Text File Ops

@@ -4,12 +4,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { resolveRuntimeArtifact } from "../skills/miku-text-file-ops/lib/runtime-artifacts.mjs";
+import { resolveRuntimeArtifact } from "../skills/igapyon-miku-text-file-ops/lib/runtime-artifacts.mjs";
 
 const scriptRoot = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptRoot, "..");
 const repoName = "miku-text-file-ops-skills";
-const skillName = "miku-text-file-ops";
+const skillName = "igapyon-miku-text-file-ops";
 const sourceSkillRoot = path.resolve(repoRoot, "skills", skillName);
 const bundleRoot = path.resolve(repoRoot, "bundle", repoName);
 const bundleSkillRoot = path.resolve(bundleRoot, "skills", skillName);

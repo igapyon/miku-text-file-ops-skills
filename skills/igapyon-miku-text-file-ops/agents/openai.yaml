@@ -1,4 +1,4 @@
 interface:
   display_name: "Miku Text File Ops"
   short_description: "Encoding-aware text file operations for agents"
-  default_prompt: "Use $miku-text-file-ops to safely inspect or edit a non-UTF-8 text file."
+  default_prompt: "Use $igapyon-miku-text-file-ops to safely inspect or edit a non-UTF-8 text file."

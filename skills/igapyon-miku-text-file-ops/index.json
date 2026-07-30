@@ -1,11 +1,11 @@
 {
- "title": "miku-text-file-ops Skill Index",
+ "title": "igapyon-miku-text-file-ops Skill Index",
  "generator": "miku-indexgen",
- "generation": {"schemaVersion":1,"inputPath":".","markdownOutput":false,"recursive":true,"includeExtensions":["md","json","mjs","yaml","txt"],"inputEncoding":"utf8","outputEncoding":"utf8","title":"miku-text-file-ops Skill Index","includeGeneratorMetadata":true},
+ "generation": {"schemaVersion":1,"inputPath":".","markdownOutput":false,"recursive":true,"includeExtensions":["md","json","mjs","yaml","txt"],"inputEncoding":"utf8","outputEncoding":"utf8","title":"igapyon-miku-text-file-ops Skill Index","includeGeneratorMetadata":true},
  "basePath": ".",
  "files": [
-  {"name":"SKILL.md","path":"SKILL.md","ext":"md","dir":"","size":3685,"description":"Use when the user explicitly names `miku-text-file-ops` or `miku-text-file-ops-skills`, or when encoding-aware local text operations are required for non-UTF-8 files, mixed encodings, repository encoding rules, Windows-31J, explicit encoding conversion,...","summary":"Miku Text File Ops"},
-  {"name":"openai.yaml","path":"agents/openai.yaml","ext":"yaml","dir":"agents","size":211},
+  {"name":"SKILL.md","path":"SKILL.md","ext":"md","dir":"","size":3724,"description":"Use when the user explicitly names `igapyon-miku-text-file-ops`, `miku-text-file-ops`, or `miku-text-file-ops-skills`, or when encoding-aware local text operations are required for non-UTF-8 files, mixed encodings, repository encoding rules, Windows-31J...","summary":"Miku Text File Ops"},
+  {"name":"openai.yaml","path":"agents/openai.yaml","ext":"yaml","dir":"agents","size":219},
   {"name":"run-miku-text-file-ops.mjs","path":"lib/run-miku-text-file-ops.mjs","ext":"mjs","dir":"lib","size":1355},
   {"name":"runtime-artifacts.mjs","path":"lib/runtime-artifacts.mjs","ext":"mjs","dir":"lib","size":1720},
   {"name":"UNICODE-LICENSE.txt","path":"licenses/UNICODE-LICENSE.txt","ext":"txt","dir":"licenses","size":1995},

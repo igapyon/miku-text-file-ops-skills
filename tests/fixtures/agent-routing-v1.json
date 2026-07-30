@@ -27,9 +27,27 @@
       "expectedOperations": ["read", "update"]
     },
     {
-      "id": "explicit-product",
+      "id": "explicit-formal-skill",
+      "category": "explicit",
+      "prompt": "igapyon-miku-text-file-opsを使ってlegacyディレクトリの候補ファイルを調べて。",
+      "expectSkill": true,
+      "expectBundledCli": true,
+      "expectedOperations": ["search"],
+      "expectedInitialProjection": "files"
+    },
+    {
+      "id": "explicit-product-compatibility",
       "category": "explicit",
       "prompt": "miku-text-file-opsを使ってlegacyディレクトリの候補ファイルを調べて。",
+      "expectSkill": true,
+      "expectBundledCli": true,
+      "expectedOperations": ["search"],
+      "expectedInitialProjection": "files"
+    },
+    {
+      "id": "explicit-repository-compatibility",
+      "category": "explicit",
+      "prompt": "miku-text-file-ops-skillsを使ってlegacyディレクトリの候補ファイルを調べて。",
       "expectSkill": true,
       "expectBundledCli": true,
       "expectedOperations": ["search"],
