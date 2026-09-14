@@ -40,7 +40,7 @@ test("bundled runtime exposes version and help metadata", () => {
   const version = runMikuTextFileOps({ args: ["--version"] });
   assert.equal(version.status, 0);
   assert.equal(version.stderr, "");
-  assert.equal(version.stdout, "0.5.0\n");
+  assert.equal(version.stdout, "0.6.0\n");
 
   const help = runMikuTextFileOps({ args: ["--help"] });
   assert.equal(help.status, 0);
@@ -58,18 +58,68 @@ test("package and bundled runtime versions follow the patch-drift policy", () =>
   const packageParts = packageJson.version.split(".").map(Number);
   const runtimeParts = version.stdout.trim().split(".").map(Number);
   assert.deepEqual(packageParts.slice(0, 2), runtimeParts.slice(0, 2));
-  assert.deepEqual(packageParts, [0, 5, 0]);
-  assert.deepEqual(runtimeParts, [0, 5, 0]);
+  assert.deepEqual(packageParts, [0, 6, 0]);
+  assert.deepEqual(runtimeParts, [0, 6, 0]);
 });
 
 test("bundled runtime digest and size match the accepted upstream asset", () => {
   const runtime = resolveRuntimeArtifact();
   const bytes = fs.readFileSync(runtime.path);
-  assert.equal(bytes.length, 721066);
+  assert.equal(bytes.length, 721194);
   assert.equal(
     crypto.createHash("sha256").update(bytes).digest("hex"),
-    "70f925490589698bae0d45774383ca9fbb90b6fa37631ce68450dc701f1b91ed"
+    "8308228d3c277394a13a0737f5a0eeabb345a02d1c59827fcd70062404ee939d"
   );
+});
+
+test("v0.6.0 treats scan diagnostics as incomplete search discovery", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "miku-text-file-ops-"));
+  try {
+    fs.writeFileSync(path.join(workspace, "a.txt"), "needle\n");
+    fs.writeFileSync(path.join(workspace, ".gitignore"), Buffer.from([0xff]));
+
+    const result = runMikuTextFileOps({
+      args: ["--root", workspace, "--json", "search"],
+      input: `${JSON.stringify({
+        mode: "content",
+        projection: "summary",
+        pattern: "needle",
+        include: ["*.txt"]
+      })}\n`
+    });
+    assert.equal(result.status, 1);
+    const response = JSON.parse(result.stdout);
+    const summary = response.results.find((record) => record.type === "searchSummary");
+    assert.equal(response.status, "partial");
+    assert.ok(response.completeness.reasons.includes("source_error"));
+    assert.equal(summary.scanComplete, false);
+    assert.equal(summary.filesMatched, null);
+    assert.equal(summary.filesMatchedAtLeast, 1);
+    assert.equal(summary.matchesFound, null);
+    assert.equal(summary.matchesFoundAtLeast, 1);
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("v0.6.0 protects mixed-case .git mutation paths", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "miku-text-file-ops-"));
+  try {
+    const result = runMikuTextFileOps({
+      args: ["--root", workspace, "--json", "update"],
+      input: `${JSON.stringify({
+        path: ".GIT/config",
+        expectedRevision: `sha256:${"0".repeat(64)}`,
+        change: { type: "replace", content: "blocked\n" }
+      })}\n`
+    });
+    const response = JSON.parse(result.stdout);
+    assert.equal(result.status, 2);
+    assert.equal(response.status, "failed");
+    assert.equal(response.diagnostics[0].code, "protected_path");
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
 });
 
 test("launcher executes a structured path search", () => {

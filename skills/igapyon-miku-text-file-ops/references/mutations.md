@@ -38,6 +38,10 @@ applied. Do not resend the unchanged request. Read the target again, inspect
 the latest bounded context, compare it with the context retained from the
 first read, and rebuild the mutation with the new read revision.
 
+Mutation paths whose first segment is `.git` are protected without regard to
+ASCII letter case. Treat `.GIT/config` and `.GiT/config` as protected paths
+and report the structured `protected_path` diagnostic.
+
 Rebuild automatically only when the intended location remains unique and no
 intervening change would be removed. If anchors overlap an intervening change,
 the target becomes ambiguous, the encoding policy changes, or rebuilding could

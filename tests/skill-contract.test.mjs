@@ -83,7 +83,7 @@ test("skill routes projections, bounded reads, and partial responses", () => {
   assert.match(skill, /response-handling\.md.*result is partial/s);
 });
 
-test("skill routes the v0.5.0 transport and stale-revision contracts", () => {
+test("skill routes the v0.6.0 transport and stale-revision contracts", () => {
   const skill = fs.readFileSync(path.resolve(skillRoot, "SKILL.md"), "utf8");
   const runtime = fs.readFileSync(
     path.resolve(skillRoot, "references/runtime.md"),
@@ -124,6 +124,9 @@ test("skill routes the v0.5.0 transport and stale-revision contracts", () => {
   assert.match(runtime, /exclude `workplace\/\*\*` from CLI searches/);
   assert.match(runtime, /do\s+not stage the files/);
   assert.match(runtime, /miku-text-file-ops#15/);
+  assert.match(runtime, /v0\.6\.0/);
+  assert.match(runtime, /scan diagnostics as incomplete/);
+  assert.match(runtime, /case/);
   assert.match(runtime, /Target files may use Windows-31J/);
   assert.match(mutations, /stale_revision/);
   assert.match(mutations, /Do not resend the unchanged request/);
@@ -138,7 +141,7 @@ test("skill routes the v0.5.0 transport and stale-revision contracts", () => {
   assert.match(workflow, /stale_revision \(mutation not applied\)/);
 });
 
-test("encoding policy documents the v0.5.0 operation contract", () => {
+test("encoding policy documents the v0.6.0 operation contract", () => {
   const skill = fs.readFileSync(path.resolve(skillRoot, "SKILL.md"), "utf8");
   const policy = fs.readFileSync(
     path.resolve(skillRoot, "references/encoding-policy.md"),

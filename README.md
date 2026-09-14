@@ -19,10 +19,18 @@ result semantics remain in the upstream runtime.
 
 ```bash
 npm test
+npm run test:verify
 npm run build:bundle
 npm run build:bundle:zip
 npm run build
 ```
+
+`npm test` and `npm run build` generate the release ZIP once and then verify
+that same ZIP. A successful run leaves the verified ZIP as the release
+candidate. `npm run test:verify` verifies an existing ZIP without regenerating
+it and therefore requires the ZIP to already exist. `npm run build:bundle:zip`
+only generates the ZIP; run `npm run test:verify` afterward before distributing
+it.
 
 The release ZIP is written as:
 

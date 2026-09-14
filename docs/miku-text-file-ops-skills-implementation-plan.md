@@ -202,7 +202,7 @@ installed Skill metadata.
 1. Select the upstream GitHub Release, tag, and commit used as the
    compatibility source.
 2. Accept only the reviewed Release asset for the version selected by the
-   Skills package; the current accepted version is `v0.5.0`.
+   Skills package; the current accepted version is `v0.6.0`.
 3. Have a human place the standalone CLI release asset under
    `skills/igapyon-miku-text-file-ops/runtime/`.
 4. Record the original asset URL, release tag, commit, received filename,

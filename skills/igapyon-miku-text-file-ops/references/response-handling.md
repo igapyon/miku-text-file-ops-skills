@@ -22,6 +22,12 @@ runtime-reported host ceiling.
 Surface decoding, encoding, stale revision, path, ignore, and budget
 diagnostics without replacing upstream codes or messages.
 
+For `v0.6.0` search responses, a `source_error` during workspace traversal
+makes discovery incomplete even when the file-visit limit was not reached.
+Treat summary totals as lower bounds, keep `scanComplete` false, and treat
+facet records as non-exact. A diagnostic omitted by `maxDiagnostics` does not
+restore completeness.
+
 A successful mutation response is authoritative. Re-read only when semantic
 confirmation is useful; do not re-read automatically merely to confirm that a
 successful write occurred.
