@@ -131,9 +131,13 @@ The same commands may replace `%TEMP%` with a reviewed project-local directory
 such as `<project-root>\workplace\tmp\miku-text-file-ops`.
 
 The accepted upstream contract is documented in
-[miku-text-file-ops CLI Invocation Contract](https://github.com/igapyon/miku-text-file-ops/blob/3955c7350e5c331d7b8ff6dce9e92787d469dac1/docs/cli-invocation.md)
+[miku-text-file-ops CLI Invocation Contract](https://github.com/igapyon/miku-text-file-ops/blob/923e6ca2ffecb158bb8067fe88430f0bf06dbb07/docs/cli-invocation.md)
 and tracked by
 [miku-text-file-ops#15](https://github.com/igapyon/miku-text-file-ops/issues/15).
+
+The `v0.6.0` runtime additionally treats scan diagnostics as incomplete
+discovery and protects mutation paths whose first segment is `.git` without
+regard to ASCII letter case.
 
 ## Encoding Boundary
 

@@ -8039,7 +8039,7 @@ function validateWorkspacePath(value, field, mutation) {
   if (segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")) {
     throw validationError("path_escape", `${field} contains an invalid path segment`, { field, path });
   }
-  if (mutation && segments[0] === ".git") {
+  if (mutation && /^\.git$/iu.test(segments[0])) {
     throw validationError("protected_path", "Mutation under .git is prohibited", { field, path });
   }
   return path;
@@ -9798,15 +9798,16 @@ async function executeSearch(workspace, input, options = {}) {
   if (scan.truncated) {
     state.reasons.add("file_visit_limit");
   }
+  const discoveryComplete = !scan.truncated && scan.diagnostics.length === 0;
   if (request.mode === "paths") {
-    executePathSearch(state, scan.files, !scan.truncated);
+    executePathSearch(state, scan.files, discoveryComplete, scan.truncated);
   } else {
-    await executeContentSearch(state, scan.files, request, options, !scan.truncated);
+    await executeContentSearch(state, scan.files, request, options, discoveryComplete);
   }
   enforceSearchResultByteBudget(state);
   return buildSearchEnvelope(state);
 }
-function executePathSearch(state, candidates, discoveryComplete) {
+function executePathSearch(state, candidates, discoveryComplete, visitLimitReached) {
   const request = state.request;
   if (request.mode !== "paths") {
     throw new Error("Path request expected");
@@ -9814,7 +9815,7 @@ function executePathSearch(state, candidates, discoveryComplete) {
   const visited = candidates;
   state.filesVisited = visited.length;
   let scanComplete = discoveryComplete;
-  if (!scanComplete) {
+  if (visitLimitReached) {
     state.reasons.add("file_visit_limit");
   }
   let projectionRecords = [];
@@ -10191,7 +10192,7 @@ function compareUnicodeScalars4(left, right) {
 
 // dist/src/metadata.js
 var PRODUCT_NAME = "miku-text-file-ops";
-var PRODUCT_VERSION = "0.5.0";
+var PRODUCT_VERSION = "0.6.0";
 
 // dist/src/help.js
 var EXAMPLE_REVISION = `sha256:${"0".repeat(64)}`;

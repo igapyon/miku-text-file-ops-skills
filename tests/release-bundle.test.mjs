@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
-import test from "node:test";
+import test, { after, before } from "node:test";
 
 import { resolveRuntimeArtifact } from "../skills/igapyon-miku-text-file-ops/lib/runtime-artifacts.mjs";
 
@@ -14,12 +15,28 @@ const zipPath = path.resolve(
   root,
   `bundle/igapyon-miku-text-file-ops-skills-${packageJson.version}.zip`
 );
+let initialZipDigest;
+
+before(() => {
+  assert.ok(
+    fs.existsSync(zipPath),
+    `release ZIP is missing: ${zipPath}; run npm run build:bundle:zip or npm test first`
+  );
+  initialZipDigest = sha256File(zipPath);
+});
+
+after(() => {
+  if (initialZipDigest === undefined) {
+    return;
+  }
+  assert.equal(
+    sha256File(zipPath),
+    initialZipDigest,
+    "release ZIP changed while it was being verified"
+  );
+});
 
 test("release zip contains the installable Skill and standalone runtime only", () => {
-  execFileSync("node", ["scripts/build-skill-bundle-zip.mjs"], {
-    cwd: root,
-    stdio: "pipe"
-  });
   const entries = execFileSync("unzip", ["-Z1", zipPath], {
     cwd: root,
     encoding: "utf8"
@@ -52,6 +69,12 @@ test("release zip contains the installable Skill and standalone runtime only", (
   assert.equal(entries.some((entry) => entry.startsWith("docs/")), false);
   assert.equal(entries.some((entry) => entry.includes("workplace/")), false);
 });
+
+function sha256File(filePath) {
+  return createHash("sha256")
+    .update(fs.readFileSync(filePath))
+    .digest("hex");
+}
 
 test("isolated extracted bundle runs runtime metadata through its launcher", () => {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "miku-text-file-ops-bundle-"));

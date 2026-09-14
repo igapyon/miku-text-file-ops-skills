@@ -1,13 +1,14 @@
 {
   "name": "miku-text-file-ops-skills",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
   "description": "Agent Skills for miku-text-file-ops",
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
-    "test": "node --test --test-concurrency=1 tests/*.test.mjs",
-    "build": "npm test && npm run build:bundle:zip",
+    "test": "npm run build:bundle:zip && npm run test:verify",
+    "test:verify": "node --test --test-concurrency=1 tests/*.test.mjs",
+    "build": "npm test",
     "build:bundle": "node scripts/build-skill-bundle.mjs",
     "build:bundle:zip": "node scripts/build-skill-bundle-zip.mjs"
   },
