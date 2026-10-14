@@ -19,7 +19,6 @@ main();
 function main() {
   const runtime = resolveRuntimeArtifact();
   requireFile(path.resolve(sourceSkillRoot, "SKILL.md"));
-  requireFile(path.resolve(sourceSkillRoot, "index.json"));
 
   fs.rmSync(bundleRoot, { recursive: true, force: true });
   fs.mkdirSync(path.dirname(bundleSkillRoot), { recursive: true });

@@ -30,7 +30,7 @@ test("skill contract is narrow and directly routes bundled references", () => {
   assert.match(skill, /references\/mutations\.md/);
   assert.match(skill, /references\/workflow\.md/);
   assert.match(skill, /references\/response-handling\.md/);
-  assert.match(skill, /index\.json/);
+  assert.equal(fs.existsSync(path.resolve(skillRoot, "index.json")), false);
   assert.ok(skill.split(/\n/).length <= 200);
 
   const references = fs.readdirSync(path.resolve(skillRoot, "references"))
@@ -240,38 +240,9 @@ test("skill description and body stay within context-budget targets", (context) 
   assert.ok(metrics.skillLines <= 500);
 });
 
-test("generated discovery index matches indexed files and sizes", () => {
-  const indexPath = path.resolve(skillRoot, "index.json");
-  assert.equal(fs.existsSync(indexPath), true);
-  const index = JSON.parse(fs.readFileSync(indexPath, "utf8"));
-  const indexed = new Map(index.files.map((entry) => [entry.path, entry.size]));
-  const expected = collectIndexedFiles(skillRoot);
-  assert.deepEqual([...indexed.keys()], [...expected.keys()]);
-  assert.deepEqual([...indexed.values()], [...expected.values()]);
+test("skill bundle has no generated root discovery index", () => {
+  assert.equal(fs.existsSync(path.resolve(skillRoot, "index.json")), false);
 });
-
-function collectIndexedFiles(directory, relativeRoot = "") {
-  const result = new Map();
-  const entries = fs.readdirSync(directory, { withFileTypes: true })
-    .filter((entry) => !entry.name.startsWith("."))
-    .sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
-
-  for (const entry of entries) {
-    const relative = relativeRoot ? `${relativeRoot}/${entry.name}` : entry.name;
-    const absolute = path.resolve(directory, entry.name);
-    if (entry.isDirectory()) {
-      for (const [nestedPath, size] of collectIndexedFiles(absolute, relative)) {
-        result.set(nestedPath, size);
-      }
-      continue;
-    }
-    if (relative === "index.json" || !/\.(?:md|json|mjs|yaml|txt)$/.test(entry.name)) {
-      continue;
-    }
-    result.set(relative, fs.statSync(absolute).size);
-  }
-  return result;
-}
 
 function extractDescription(skill) {
   const match = skill.match(/^description:\s*(.+)$/m);

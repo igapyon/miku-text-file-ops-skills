@@ -11,9 +11,8 @@ semantics in the upstream runtime.
 
 ## Execution Contract
 
-Require Node.js 22 or newer. Resolve the installed Skill root and read
-`index.json` before discovering bundled files. Keep that root separate from the
-project or workspace root being operated on.
+Require Node.js 22 or newer. Resolve the installed Skill root from this
+`SKILL.md` and its linked references. Keep that root separate from the project or workspace root being operated on. Use scoped filename or text search when a needed bundled file is not linked.
 
 For data operations, use only the bundled launcher:
 
