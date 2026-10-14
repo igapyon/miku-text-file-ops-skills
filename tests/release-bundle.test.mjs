@@ -44,7 +44,6 @@ test("release zip contains the installable Skill and standalone runtime only", (
 
   for (const required of [
     "skills/igapyon-miku-text-file-ops/SKILL.md",
-    "skills/igapyon-miku-text-file-ops/index.json",
     "skills/igapyon-miku-text-file-ops/lib/runtime-artifacts.mjs",
     "skills/igapyon-miku-text-file-ops/lib/run-miku-text-file-ops.mjs",
     "skills/igapyon-miku-text-file-ops/references/encoding-policy.md",

@@ -54,7 +54,7 @@ not require a new upstream CLI artifact.
 
 - `skills/igapyon-miku-text-file-ops/` is the only canonical installable
   source.
-- `index.json` is generated with `miku-indexgen`; do not edit it manually.
+- The skill uses direct reference links and scoped searches; it does not require a generated root inventory.
 - `workplace/` is local scratch space; only `.gitkeep` is tracked.
 - `.codex/skills/`, `bundle/`, `release-assets/`, and dependencies are ignored.
 - GitHub PRs, tags, and Releases are human-operated.
